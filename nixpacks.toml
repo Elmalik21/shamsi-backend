@@ -1,11 +1,20 @@
 [phases.setup]
-nixPkgs = ["gdal", "geos", "proj", "postgresql"]
+# تم إضافة بايثون ومكتبات التطوير الضرورية لـ GDAL و Psycopg2
+nixPkgs = ["python310", "python310Packages.pip", "gdal", "geos", "proj", "postgresql", "gcc"]
 
 [phases.install]
-cmds = ["pip install -r requirements.txt"]
+# إنشاء بيئة افتراضية وتحديث pip ثم تثبيت المكتبات
+cmds = [
+    "python -m venv /opt/venv",
+    ". /opt/venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt"
+]
 
 [phases.build]
-cmds = ["python manage.py collectstatic --noinput"]
+# تأكد من استخدام البيئة الافتراضية أثناء تجميع الملفات الثابتة
+cmds = [
+    ". /opt/venv/bin/activate && python manage.py collectstatic --noinput"
+]
 
 [start]
-cmd = "gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"
+# تشغيل الخادم من داخل البيئة الافتراضية
+cmd = ". /opt/venv/bin/activate && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"
