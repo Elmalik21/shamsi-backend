@@ -1,5 +1,5 @@
 [phases.setup]
-nixPkgs = ["gdal", "libgdal-dev", "postgresql-client"]
+nixPkgs = ["gdal", "postgresql"]
 
 [phases.install]
 cmds = ["pip install -r requirements.txt"]
