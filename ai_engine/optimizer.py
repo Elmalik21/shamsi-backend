@@ -1,0 +1,530 @@
+"""
+ai_engine/optimizer.py
+NSGA-II Multi-Objective Solar System Optimizer for Egypt.
+Model 2 — Core Optimizer
+
+Reference: Deb et al. (2002) IEEE Trans. Evolutionary Computation 6(2):182-197.
+"""
+from __future__ import annotations
+import random
+import time
+import uuid
+import logging
+import numpy as np
+
+logger = logging.getLogger(__name__)
+
+
+class EgyptianSolarOptimizer:
+    """
+    NSGA-II optimizer for Egyptian solar PV systems.
+
+    Decision Variables: [panel_idx, inverter_idx, panel_count, tilt_angle]
+
+    Objectives:
+      f1 (maximize): annual energy yield (kWh)
+      f2 (minimize): total system cost (EGP)  — includes 14% VAT
+      f3 (maximize): space utilisation (%)
+
+    Egyptian adaptations:
+      - Dust loss factor from K-Means dust zone
+      - Temperature derating from actual Egyptian climate data
+      - EGYPTERA tiered tariffs for financial calculations
+      - Real Egyptian market equipment prices (Jan–Mar 2026)
+      - Egyptian VAT 14%
+      - Tilt angle constrained to latitude ± 5°
+    """
+
+    POPULATION_SIZE = 100
+    GENERATIONS     = 50
+    CROSSOVER_PROB  = 0.7
+    MUTATION_PROB   = 0.3
+    TOURNAMENT_SIZE = 2
+
+    def __init__(self):
+        from ai_engine.yield_predictor  import EgyptianYieldPredictor
+        from ai_engine.dust_clustering  import EgyptianDustClusterer
+
+        self.yield_predictor  = EgyptianYieldPredictor()
+        self.dust_clusterer   = EgyptianDustClusterer()
+
+    # ── Objective functions ───────────────────────────────────────────────────
+
+    def _f1_energy(self, individual, context) -> float:
+        """Objective 1: Maximise annual energy yield (kWh)."""
+        panels   = context['panels']
+        panel    = panels[individual[0]]
+        count    = individual[2]
+        tilt     = individual[3]
+        climate  = context['climate']
+        dust     = context['dust_zone']
+        loc      = context['location']
+        site     = context['site']
+
+        features = {
+            'avg_ghi':           climate['avg_ghi'],
+            'avg_temperature':   climate['avg_temperature'],
+            'max_temperature':   climate['max_temperature'],
+            'avg_humidity':      climate['avg_humidity'],
+            'avg_wind_speed':    climate['avg_wind_speed'],
+            'dust_risk_score':   dust['factor'],
+            'latitude':          loc['latitude'],
+            'tilt_angle':        tilt,
+            'panel_efficiency':  panel.efficiency_pct / 100.0,
+            'temp_coefficient':  panel.temp_coefficient_pct,
+            'system_kw':         (count * panel.capacity_w) / 1000.0,
+        }
+
+        result     = self.yield_predictor.predict(features)
+        base_yield = result['predicted_annual_kwh']
+
+        dust_loss    = dust['factor']
+        temp_avg     = climate['avg_temperature']
+        temp_loss    = max(0.0, (temp_avg - 25) * abs(panel.temp_coefficient_pct) * 0.01)
+        shading_loss = site['shading_loss_pct'] / 100.0
+
+        adjusted = base_yield * (1 - dust_loss) * (1 - temp_loss) * (1 - shading_loss)
+        return float(adjusted)
+
+    def _f2_cost(self, individual, context) -> float:
+        """Objective 2: Minimise total system cost (EGP) incl. 14% VAT."""
+        panel    = context['panels'][individual[0]]
+        inverter = context['inverters'][individual[1]]
+        count    = individual[2]
+        ic       = context['install_costs']
+        sys_kw   = (count * panel.capacity_w) / 1000.0
+
+        panel_cost    = count * panel.price_egp
+        inverter_cost = inverter.price_egp
+        mounting_cost = count * ic['mounting_avg']
+        install_cost  = sys_kw * ic['labor_per_kw']
+        wiring_cost   = sys_kw * ic['wiring_per_kw']
+
+        subtotal        = panel_cost + inverter_cost + mounting_cost + install_cost + wiring_cost
+        total_with_vat  = subtotal * 1.14   # Egyptian VAT 14%
+        return float(total_with_vat)
+
+    def _f3_space(self, individual, context) -> float:
+        """Objective 3: Maximise space utilisation (%)."""
+        panel     = context['panels'][individual[0]]
+        count     = individual[2]
+        used_area = count * panel.area_m2
+        available = context['site']['available_area_m2']
+        if used_area > available:
+            return 0.0
+        return float(used_area / available)
+
+    def _evaluate(self, individual, context):
+        """Evaluate all three objectives with hard constraint checks."""
+        panel    = context['panels'][individual[0]]
+        inverter = context['inverters'][individual[1]]
+        count    = individual[2]
+        tilt     = individual[3]
+
+        # Hard constraint: panel count vs available area
+        max_panels = int(context['site']['available_area_m2'] / panel.area_m2)
+        if count > max_panels or count < 2:
+            return (0.0, float('inf'), 0.0)
+
+        # Hard constraint: budget
+        cost = self._f2_cost(individual, context)
+        if cost > context['site']['budget_egp']:
+            return (0.0, float('inf'), 0.0)
+
+        # Hard constraint: tilt angle (latitude ± 5°)
+        lat = context['location']['latitude']
+        if not (lat - 5 <= tilt <= lat + 5):
+            return (0.0, float('inf'), 0.0)
+
+        energy = self._f1_energy(individual, context)
+        space  = self._f3_space(individual, context)
+        return (energy, cost, space)
+
+    # ── Context builder ───────────────────────────────────────────────────────
+
+    def _build_context(self, request_data: dict) -> dict:
+        """Load all required data and return optimization context dict."""
+        from solar_data.models import Location, DailyClimateData, SolarPanel, Inverter, InstallationCost
+        from django.db.models import Avg, Max
+
+        # Location & climate
+        loc_id = request_data.get('location_id', 1)
+        try:
+            loc = Location.objects.select_related('governorate').get(location_id=loc_id)
+        except Location.DoesNotExist:
+            loc = Location.objects.select_related('governorate').first()
+            if loc is None:
+                raise ValueError("No locations in database. Load fixtures first.")
+
+        agg = DailyClimateData.objects.filter(location=loc).aggregate(
+            avg_ghi=Avg('allsky_sfc_sw_dwn'),
+            avg_temp=Avg('t2m'),
+            max_temp=Max('t2m_max'),
+            avg_hum=Avg('rh2m'),
+            avg_wind=Avg('ws2m'),
+        )
+
+        climate = {
+            'avg_ghi':         agg['avg_ghi']  or 5.5,
+            'avg_temperature': agg['avg_temp'] or 28.0,
+            'max_temperature': agg['max_temp'] or 40.0,
+            'avg_humidity':    agg['avg_hum']  or 40.0,
+            'avg_wind_speed':  agg['avg_wind'] or 3.5,
+        }
+
+        dust_zone  = self.dust_clusterer.predict_zone(loc.location_id)
+        panels     = list(SolarPanel.objects.filter(in_stock=True))
+        inverters  = list(Inverter.objects.filter(in_stock=True))
+
+        if not panels:
+            raise ValueError("No solar panels in database. Load solar_equipment_2026 fixture.")
+        if not inverters:
+            raise ValueError("No inverters in database. Load solar_equipment_2026 fixture.")
+
+        # Installation cost averages
+        ic_qs = InstallationCost.objects.all()
+        mounting_avg  = self._ic_avg(ic_qs, 'panel')
+        labor_per_kw  = self._ic_avg(ic_qs, 'labor') * 1.43   # convert per-panel → per-kW estimate
+        wiring_per_kw = self._ic_avg(ic_qs, 'wiring', default=4250.0)
+
+        install_costs = {
+            'mounting_avg':  mounting_avg,
+            'labor_per_kw':  labor_per_kw,
+            'wiring_per_kw': wiring_per_kw,
+        }
+
+        site_area = float(request_data.get('available_area_m2', 100.0))
+        budget    = float(request_data.get('budget_egp', 150000.0))
+        shading   = float(request_data.get('shading_loss_pct', 5.0))
+
+        # Max panels across all panel types
+        min_area  = min(p.area_m2 for p in panels)
+        max_panels= max(4, int(site_area / min_area))
+
+        return {
+            'location':      {'latitude': loc.latitude, 'longitude': loc.longitude,
+                              'name': loc.name, 'id': loc.location_id},
+            'climate':       climate,
+            'dust_zone':     dust_zone,
+            'panels':        panels,
+            'inverters':     inverters,
+            'install_costs': install_costs,
+            'site': {
+                'available_area_m2': site_area,
+                'budget_egp':        budget,
+                'shading_loss_pct':  shading,
+                'include_battery':   bool(request_data.get('include_battery', False)),
+            },
+            'max_panels':    max_panels,
+            'request':       request_data,
+        }
+
+    def _ic_avg(self, qs, keyword: str, default: float = 700.0) -> float:
+        """Lookup install cost average by keyword in item_name."""
+        row = qs.filter(item_name__icontains=keyword).first()
+        return row.price_avg_egp if row else default
+
+    # ── NSGA-II helper classes ────────────────────────────────────────────────
+
+    class _Individual(list):
+        def __init__(self, *args):
+            super().__init__(*args)
+            self.fitness = None   # tuple (energy, cost, space)
+
+    def _dominates(self, a, b) -> bool:
+        """Return True if individual a dominates b (for maximising all objectives)."""
+        fa, fb = a.fitness, b.fitness
+        # Objectives: energy(max), cost(min→negate), space(max)
+        # Normalise: all maximise → negate cost
+        va = (fa[0], -fa[1], fa[2])
+        vb = (fb[0], -fb[1], fb[2])
+        return all(x >= y for x, y in zip(va, vb)) and any(x > y for x, y in zip(va, vb))
+
+    def _non_dominated_sort(self, population):
+        """Fast non-dominated sort. Returns list of fronts (lists of indices)."""
+        n = len(population)
+        S = [[] for _ in range(n)]   # dominated sets
+        n_dom = [0] * n              # domination counts
+        fronts = [[]]
+
+        for p in range(n):
+            for q in range(n):
+                if p == q:
+                    continue
+                if self._dominates(population[p], population[q]):
+                    S[p].append(q)
+                elif self._dominates(population[q], population[p]):
+                    n_dom[p] += 1
+            if n_dom[p] == 0:
+                fronts[0].append(p)
+
+        i = 0
+        while fronts[i]:
+            next_front = []
+            for p in fronts[i]:
+                for q in S[p]:
+                    n_dom[q] -= 1
+                    if n_dom[q] == 0:
+                        next_front.append(q)
+            i += 1
+            fronts.append(next_front)
+
+        return fronts[:-1]   # remove empty last front
+
+    def _crowding_distance(self, front, population):
+        """Compute crowding distance for a front (list of indices)."""
+        dist = {i: 0.0 for i in front}
+        n_obj = 3
+        for obj_idx in range(n_obj):
+            sorted_f = sorted(front, key=lambda i: population[i].fitness[obj_idx])
+            f_min = population[sorted_f[0]].fitness[obj_idx]
+            f_max = population[sorted_f[-1]].fitness[obj_idx]
+            if f_max == f_min:
+                continue
+            dist[sorted_f[0]]  = float('inf')
+            dist[sorted_f[-1]] = float('inf')
+            for k in range(1, len(sorted_f) - 1):
+                dist[sorted_f[k]] += (
+                    population[sorted_f[k+1]].fitness[obj_idx] -
+                    population[sorted_f[k-1]].fitness[obj_idx]
+                ) / (f_max - f_min)
+        return dist
+
+    def _tournament_select(self, population, fronts, crowding):
+        """Binary tournament selection based on rank + crowding distance."""
+        front_rank = {}
+        for rank, front in enumerate(fronts):
+            for idx in front:
+                front_rank[idx] = rank
+
+        candidates = random.sample(range(len(population)), self.TOURNAMENT_SIZE)
+        best = candidates[0]
+        for c in candidates[1:]:
+            if front_rank.get(c, 999) < front_rank.get(best, 999):
+                best = c
+            elif (front_rank.get(c, 999) == front_rank.get(best, 999) and
+                  crowding.get(c, 0.0) > crowding.get(best, 0.0)):
+                best = c
+        return best
+
+    def _crossover(self, p1, p2, context):
+        """Simulated binary crossover + panel/inverter uniform cross."""
+        c1 = self._Individual(p1)
+        c2 = self._Individual(p2)
+        if random.random() < self.CROSSOVER_PROB:
+            # Uniform crossover for integer genes
+            for i in [0, 1]:  # panel_idx, inverter_idx
+                if random.random() < 0.5:
+                    c1[i], c2[i] = c2[i], c1[i]
+            # Blend crossover for count & tilt
+            alpha = random.random()
+            c1[2] = int(alpha * p1[2] + (1 - alpha) * p2[2])
+            c2[2] = int(alpha * p2[2] + (1 - alpha) * p1[2])
+            c1[3] = round(alpha * p1[3] + (1 - alpha) * p2[3], 1)
+            c2[3] = round(alpha * p2[3] + (1 - alpha) * p1[3], 1)
+        return c1, c2
+
+    def _mutate(self, individual, context):
+        """Polynomial-like mutation."""
+        ind = self._Individual(individual)
+        lat = context['location']['latitude']
+        if random.random() < self.MUTATION_PROB:
+            # panel_idx
+            ind[0] = random.randint(0, len(context['panels']) - 1)
+        if random.random() < self.MUTATION_PROB:
+            # inverter_idx
+            ind[1] = random.randint(0, len(context['inverters']) - 1)
+        if random.random() < self.MUTATION_PROB:
+            # panel_count ±20%
+            panel = context['panels'][ind[0]]
+            max_p = int(context['site']['available_area_m2'] / panel.area_m2)
+            delta = random.randint(-3, 3)
+            ind[2] = max(2, min(max_p, ind[2] + delta))
+        if random.random() < self.MUTATION_PROB:
+            # tilt ±2°
+            ind[3] = round(
+                max(lat - 5, min(lat + 5, ind[3] + random.uniform(-2, 2))), 1
+            )
+        return ind
+
+    def _make_individual(self, context) -> '_Individual':
+        lat     = context['location']['latitude']
+        panel   = random.randint(0, len(context['panels']) - 1)
+        inv     = random.randint(0, len(context['inverters']) - 1)
+        pa      = context['panels'][panel]
+        max_p   = max(2, int(context['site']['available_area_m2'] / pa.area_m2))
+        count   = random.randint(4, max_p)
+        tilt    = round(lat + random.uniform(-5, 5), 1)
+        ind     = self._Individual([panel, inv, count, tilt])
+        ind.fitness = None
+        return ind
+
+    # ── Main optimisation loop ────────────────────────────────────────────────
+
+    def run(self, request_data: dict) -> dict:
+        """
+        Main NSGA-II entry point.
+
+        Args
+        ----
+        request_data: dict with keys:
+            location_id, available_area_m2, monthly_consumption_kwh,
+            usage_type, budget_egp, shading_loss_pct, include_battery
+
+        Returns
+        -------
+        dict: run_id, convergence_time_sec, pareto_solutions (list)
+        """
+        start  = time.time()
+        run_id = str(uuid.uuid4())[:8]
+
+        context = self._build_context(request_data)
+
+        # ── Initialise population ─────────────────────────────────────────────
+        pop = [self._make_individual(context) for _ in range(self.POPULATION_SIZE)]
+        for ind in pop:
+            ind.fitness = self._evaluate(ind, context)
+
+        # ── Evolution ────────────────────────────────────────────────────────
+        for gen in range(self.GENERATIONS):
+            fronts   = self._non_dominated_sort(pop)
+            crowding = {}
+            for front in fronts:
+                crowding.update(self._crowding_distance(front, pop))
+
+            offspring = []
+            while len(offspring) < self.POPULATION_SIZE:
+                i1 = self._tournament_select(pop, fronts, crowding)
+                i2 = self._tournament_select(pop, fronts, crowding)
+                c1, c2 = self._crossover(pop[i1], pop[i2], context)
+                c1 = self._mutate(c1, context)
+                c2 = self._mutate(c2, context)
+                c1.fitness = self._evaluate(c1, context)
+                c2.fitness = self._evaluate(c2, context)
+                offspring.extend([c1, c2])
+
+            # Merge + select
+            combined = pop + offspring
+            combined_fronts = self._non_dominated_sort(combined)
+            combined_cd = {}
+            for front in combined_fronts:
+                combined_cd.update(self._crowding_distance(front, combined))
+
+            new_pop = []
+            for front in combined_fronts:
+                if len(new_pop) + len(front) <= self.POPULATION_SIZE:
+                    new_pop.extend([combined[i] for i in front])
+                else:
+                    remaining = self.POPULATION_SIZE - len(new_pop)
+                    sorted_front = sorted(front, key=lambda i: combined_cd.get(i, 0), reverse=True)
+                    new_pop.extend([combined[i] for i in sorted_front[:remaining]])
+                    break
+            pop = new_pop
+
+        # ── Extract Pareto front ──────────────────────────────────────────────
+        final_fronts = self._non_dominated_sort(pop)
+        pareto = [pop[i] for i in final_fronts[0]] if final_fronts else pop
+
+        selected = self._select_diverse_solutions(pareto, context, n=5)
+
+        return {
+            'run_id':              run_id,
+            'convergence_time_sec': round(time.time() - start, 2),
+            'pareto_solutions':    selected,
+        }
+
+    # ── Solution formatting ───────────────────────────────────────────────────
+
+    def _select_diverse_solutions(self, pareto, context, n: int = 5) -> list:
+        """
+        Select n diverse solutions from Pareto front.
+        Sorts by energy yield descending, picks evenly spaced solutions.
+        Enriches each with financial metrics.
+        """
+        from solar_data.utils import calculate_annual_savings
+
+        # Filter valid solutions only
+        valid = [ind for ind in pareto if ind.fitness and ind.fitness[1] != float('inf')]
+        if not valid:
+            return []
+
+        # Sort by energy descending
+        valid.sort(key=lambda ind: ind.fitness[0], reverse=True)
+
+        # Pick up to n evenly spaced
+        if len(valid) <= n:
+            chosen = valid
+        else:
+            step    = len(valid) / n
+            chosen  = [valid[int(i * step)] for i in range(n)]
+
+        solutions = []
+        monthly_kwh = float(context['request'].get('monthly_consumption_kwh', 500))
+        usage_type  = context['request'].get('usage_type', 'RESIDENTIAL')
+
+        for rank, ind in enumerate(chosen, start=1):
+            panel    = context['panels'][ind[0]]
+            inverter = context['inverters'][ind[1]]
+            count    = ind[2]
+            tilt     = ind[3]
+            energy   = ind.fitness[0]
+            cost     = ind.fitness[1]
+            space    = ind.fitness[2]
+            sys_kw   = (count * panel.capacity_w) / 1000.0
+
+            savings  = calculate_annual_savings(energy, usage_type, monthly_kwh)
+            annual_saving = savings['annual_savings_egp']
+
+            payback = round(cost / annual_saving, 1) if annual_saving > 0 else 99.0
+
+            # 25-year ROI with 17% tariff escalation, 0.45% degradation
+            roi_25yr = 0.0
+            cum_saving = 0.0
+            s = annual_saving
+            for yr in range(1, 26):
+                s *= (1 + 0.17)            # tariff escalation
+                s *= (1 - 0.0045)          # panel degradation
+                cum_saving += s
+            roi_25yr = round(cum_saving - cost, 0)
+
+            # Monthly production
+            pred    = self.yield_predictor.predict({
+                'avg_ghi':           context['climate']['avg_ghi'],
+                'avg_temperature':   context['climate']['avg_temperature'],
+                'max_temperature':   context['climate']['max_temperature'],
+                'avg_humidity':      context['climate']['avg_humidity'],
+                'avg_wind_speed':    context['climate']['avg_wind_speed'],
+                'dust_risk_score':   context['dust_zone']['factor'],
+                'latitude':          context['location']['latitude'],
+                'tilt_angle':        tilt,
+                'panel_efficiency':  panel.efficiency_pct / 100.0,
+                'temp_coefficient':  panel.temp_coefficient_pct,
+                'system_kw':         sys_kw,
+            })
+
+            solutions.append({
+                'rank':                   rank,
+                'panel_count':            count,
+                'panel_brand':            panel.brand,
+                'panel_model':            panel.model,
+                'panel_capacity_w':       panel.capacity_w,
+                'panel_type':             panel.panel_type,
+                'panel_efficiency_pct':   panel.efficiency_pct,
+                'inverter_brand':         inverter.brand,
+                'inverter_model':         inverter.model,
+                'inverter_type':          inverter.inverter_type,
+                'inverter_kw':            inverter.capacity_kw,
+                'tilt_angle':             tilt,
+                'system_kw':              round(sys_kw, 2),
+                'annual_yield_kwh':       round(energy, 0),
+                'total_cost_egp':         round(cost, 0),
+                'space_utilisation_pct':  round(space * 100, 1),
+                'payback_years':          payback,
+                'annual_savings_egp':     round(annual_saving, 0),
+                'roi_25yr_egp':           roi_25yr,
+                'monthly_production':     pred['predicted_monthly'],
+                'dust_zone':              context['dust_zone']['name'],
+                'cleaning_interval_days': context['dust_zone']['cleaning_days'],
+            })
+
+        return solutions
