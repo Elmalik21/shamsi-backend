@@ -10,18 +10,19 @@ from datetime import timedelta
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Security Settings ---
+# يفضل دائماً وضع الـ Secret Key في متغيرات بيئة Railway
 SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-prod-key-77-shamsi-smart')
 
-# التعديل: DEBUG يتم التحكم به عبر متغيرات البيئة (افتراضياً False للأمان)
+# التعديل: DEBUG يتم التحكم به عبر متغيرات البيئة (افتراضياً True للتطوير و False للإنتاج)
 DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
 
-# التعديل: إضافة نطاقات Railway و Codespaces
+# التعديل: تم تحديد النطاقات بدقة لحل مشكلة 400 Bad Request
 ALLOWED_HOSTS = [
-    '*',
-    '.railway.app',
-    '.app.github.dev',
+    'shamsi-backend-production.up.railway.app', # الرابط المباشر الخاص بك
+    '.railway.app',                             # قبول أي نطاق فرعي من ريلواي
     'localhost',
     '127.0.0.1',
+    '*',                                        # للسماح بالوصول من أي مكان (مفيد للمشاريع التعليمية)
 ]
 
 # --- Application definition ---
@@ -47,7 +48,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', # التعديل: ضروري جداً هنا لخدمة الملفات الثابتة
+    'whitenoise.middleware.WhiteNoiseMiddleware', # ضروري لخدمة الملفات الثابتة في الإنتاج
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -78,7 +79,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database Configuration ---
-# يتم الربط تلقائياً مع قاعدة بيانات PostgreSQL على Railway عبر متغير البيئة
+# التعديل: استخدام قاعدة البيانات المربوطة في ريلواي تلقائياً
 DATABASES = {
     'default': dj_database_url.config(
         default=os.environ.get('DATABASE_URL'),
@@ -89,9 +90,11 @@ DATABASES = {
 # --- Static & Media Files ---
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-STATICFILES_DIRS = [BASE_DIR / 'static']
 
-# التعديل: تحسين أداء WhiteNoise لضغط الملفات الثابتة
+# تأكد من وجود مجلد static في مشروعك، وإلا سيظهر خطأ أثناء الـ Collectstatic
+STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else []
+
+# تحسين أداء WhiteNoise لضغط الملفات الثابتة
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
@@ -118,17 +121,16 @@ REST_FRAMEWORK = {
 }
 
 # --- CORS & CSRF Settings ---
-CORS_ALLOW_ALL_ORIGINS = True # مسموح بالكامل لتسهيل الربط مع React/Frontend
+CORS_ALLOW_ALL_ORIGINS = True 
 
+# التعديل: تأمين النطاقات الموثوقة لعمليات الـ POST
 CSRF_TRUSTED_ORIGINS = [
+    "https://shamsi-backend-production.up.railway.app",
     "https://*.railway.app",
-    "https://*.app.github.dev",
-    "https://*.github.dev",
     "http://localhost:8000",
-    "http://127.0.0.1:8000",
 ]
 
-# إعدادات البروكسي لضمان عمل HTTPS بشكل صحيح
+# إعدادات البروكسي لضمان عمل HTTPS بشكل صحيح على ريلواي
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
@@ -142,12 +144,11 @@ LOGGING = {
     },
     'loggers': {
         'django': {'handlers': ['console'], 'level': 'INFO'},
-        'solar_data': {'handlers': ['console'], 'level': 'DEBUG'},
     },
 }
 
-# التأكد من وجود المجلدات اللازمة
-for path in ['logs', 'media', 'staticfiles']:
+# التأكد من وجود المجلدات اللازمة في بيئة السيرفر
+for path in ['media', 'staticfiles']:
     os.makedirs(BASE_DIR / path, exist_ok=True)
 
 # Solar Data Configuration
