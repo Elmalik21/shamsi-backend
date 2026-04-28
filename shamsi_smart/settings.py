@@ -5,24 +5,24 @@ import os
 import dj_database_url
 from pathlib import Path
 from datetime import timedelta
+from decouple import config # تم إضافة هذه المكتبة لضمان قراءة ملف .env
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = Path(__file__).resolve().parent.parent.parent # تم تعديل المسار ليتناسب مع هيكل المجلدات لديك
 
 # --- Security Settings ---
-# يفضل دائماً وضع الـ Secret Key في متغيرات بيئة Railway
-SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-prod-key-77-shamsi-smart')
+# استخدام config بدلاً من os.environ لضمان قراءة ملف .env محلياً
+SECRET_KEY = config('SECRET_KEY', default='django-insecure-prod-key-77-shamsi-smart')
 
-# التعديل: DEBUG يتم التحكم به عبر متغيرات البيئة (افتراضياً True للتطوير و False للإنتاج)
-DEBUG = os.environ.get('DJANGO_DEBUG', 'True') == 'True'
+# التحكم في DEBUG عبر config
+DEBUG = config('DEBUG', default=True, cast=bool)
 
-# التعديل: تم تحديد النطاقات بدقة لحل مشكلة 400 Bad Request
 ALLOWED_HOSTS = [
-    'shamsi-backend-production.up.railway.app', # الرابط المباشر الخاص بك
-    '.railway.app',                             # قبول أي نطاق فرعي من ريلواي
+    'shamsi-backend-production.up.railway.app', 
+    '.railway.app',                             
     'localhost',
     '127.0.0.1',
-    '*',                                        # للسماح بالوصول من أي مكان (مفيد للمشاريع التعليمية)
+    '*',                                        
 ]
 
 # --- Application definition ---
@@ -33,6 +33,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'django.contrib.gis', # ضروري لمشروع الطاقة الشمسية (بيانات جغرافية)
     
     # Third party apps
     'rest_framework',
@@ -48,7 +49,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
-    'whitenoise.middleware.WhiteNoiseMiddleware', # ضروري لخدمة الملفات الثابتة في الإنتاج
+    'whitenoise.middleware.WhiteNoiseMiddleware', 
     'corsheaders.middleware.CorsMiddleware',
     'django.contrib.sessions.middleware.SessionMiddleware',
     'django.middleware.common.CommonMiddleware',
@@ -79,22 +80,19 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database Configuration ---
-# التعديل: استخدام قاعدة البيانات المربوطة في ريلواي تلقائياً
+# التعديل الأهم: الربط المباشر بـ DATABASE_URL الموجود في ملف .env أو Railway
 DATABASES = {
     'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL'),
-        conn_max_age=600
+        default=config('DATABASE_URL'),
+        conn_max_age=600,
+        ssl_require=True if config('DATABASE_URL', default='').startswith('postgres') else False
     )
 }
 
 # --- Static & Media Files ---
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'
-
-# تأكد من وجود مجلد static في مشروعك، وإلا سيظهر خطأ أثناء الـ Collectstatic
 STATICFILES_DIRS = [BASE_DIR / 'static'] if (BASE_DIR / 'static').exists() else []
-
-# تحسين أداء WhiteNoise لضغط الملفات الثابتة
 STATICFILES_STORAGE = 'whitenoise.storage.CompressedManifestStaticFilesStorage'
 
 MEDIA_URL = '/media/'
@@ -122,15 +120,12 @@ REST_FRAMEWORK = {
 
 # --- CORS & CSRF Settings ---
 CORS_ALLOW_ALL_ORIGINS = True 
-
-# التعديل: تأمين النطاقات الموثوقة لعمليات الـ POST
 CSRF_TRUSTED_ORIGINS = [
     "https://shamsi-backend-production.up.railway.app",
     "https://*.railway.app",
     "http://localhost:8000",
 ]
 
-# إعدادات البروكسي لضمان عمل HTTPS بشكل صحيح على ريلواي
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True
@@ -147,9 +142,8 @@ LOGGING = {
     },
 }
 
-# التأكد من وجود المجلدات اللازمة في بيئة السيرفر
+# التأكد من وجود المجلدات اللازمة
 for path in ['media', 'staticfiles']:
     os.makedirs(BASE_DIR / path, exist_ok=True)
 
-# Solar Data Configuration
 SOLAR_DATA_YEARS = list(range(2018, 2027))
