@@ -5,16 +5,14 @@ import os
 import dj_database_url
 from pathlib import Path
 from datetime import timedelta
-from decouple import config # تم إضافة هذه المكتبة لضمان قراءة ملف .env
+from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-BASE_DIR = Path(__file__).resolve().parent.parent.parent # تم تعديل المسار ليتناسب مع هيكل المجلدات لديك
+# تأكد من أن هذا المسار يشير إلى المجلد الرئيسي للمشروع (المكان الذي يوجد به manage.py)
+BASE_DIR = Path(__file__).resolve().parent.parent.parent 
 
 # --- Security Settings ---
-# استخدام config بدلاً من os.environ لضمان قراءة ملف .env محلياً
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-prod-key-77-shamsi-smart')
-
-# التحكم في DEBUG عبر config
 DEBUG = config('DEBUG', default=True, cast=bool)
 
 ALLOWED_HOSTS = [
@@ -33,7 +31,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.gis', # ضروري لمشروع الطاقة الشمسية (بيانات جغرافية)
+    'django.contrib.gis', 
     
     # Third party apps
     'rest_framework',
@@ -41,7 +39,7 @@ INSTALLED_APPS = [
     'django_filters',
     'drf_yasg',
     
-    # Local apps (Shamsi Smart Graduation Project)
+    # Local apps
     'solar_data',
     'api',
     'dashboard',
@@ -80,14 +78,25 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database Configuration ---
-# التعديل الأهم: الربط المباشر بـ DATABASE_URL الموجود في ملف .env أو Railway
-DATABASES = {
-    'default': dj_database_url.config(
-        default=config('DATABASE_URL'),
-        conn_max_age=600,
-        ssl_require=True if config('DATABASE_URL', default='').startswith('postgres') else False
-    )
-}
+# التعديل الجوهري: محاولة قراءة DATABASE_URL من البيئة (Railway) أولاً، ثم من ملف .env
+db_url = os.environ.get('DATABASE_URL') or config('DATABASE_URL', default=None)
+
+if db_url:
+    DATABASES = {
+        'default': dj_database_url.parse(db_url)
+    }
+    DATABASES['default']['CONN_MAX_AGE'] = 600
+    # تفعيل SSL فقط إذا كان الاتصال بـ Postgres أونلاين
+    if db_url.startswith('postgres'):
+        DATABASES['default']['OPTIONS'] = {'sslmode': 'require'}
+else:
+    # خيار احتياطي في حالة عدم وجود أي إعدادات (يفضل تجنبه)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # --- Static & Media Files ---
 STATIC_URL = 'static/'
