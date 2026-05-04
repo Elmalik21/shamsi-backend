@@ -12,7 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 
 # --- Security Settings ---
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-prod-key-77-shamsi-smart')
-DEBUG = config('DEBUG', default=False, cast=bool) # تغيير لـ False في الإنتاج لزيادة الأمان
+DEBUG = config('DEBUG', default=False, cast=bool)
 
 ALLOWED_HOSTS = [
     'shamsi-backend-production.up.railway.app', 
@@ -29,7 +29,7 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django.contrib.gis', 
+    'django.contrib.gis', # تفعيل الدعم الجغرافي لبيانات الطاقة الشمسية
     
     # Third party apps
     'rest_framework',
@@ -76,7 +76,7 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database Configuration ---
-# التعديل الجوهري لإنهاء مشكلة localhost:
+# الربط الديناميكي مع Railway Postgres
 DATABASES = {
     'default': dj_database_url.config(
         default=os.environ.get('DATABASE_URL') or config('DATABASE_URL', default=''),
@@ -85,11 +85,11 @@ DATABASES = {
     )
 }
 
-# إضافة دعم PostGIS لأن مشروعك يستخدم django.contrib.gis
-if DATABASES['default']:
+# إعدادات محرك PostGIS لـ Railway
+if DATABASES.get('default'):
     DATABASES['default']['ENGINE'] = 'django.contrib.gis.db.backends.postgis'
     
-    # تفعيل SSL فقط عند الاتصال بقاعدة بيانات خارجية (Railway)
+    # تفعيل SSL للأمان في السيرفر السحابي
     if not DEBUG and 'localhost' not in DATABASES['default'].get('HOST', ''):
         DATABASES['default']['OPTIONS'] = {'sslmode': 'require'}
 
@@ -145,7 +145,7 @@ LOGGING = {
     },
 }
 
-# التأكد من وجود المجلدات اللازمة
+# التأكد من جاهزية مجلدات المشروع
 for path in ['media', 'staticfiles']:
     os.makedirs(BASE_DIR / path, exist_ok=True)
 
