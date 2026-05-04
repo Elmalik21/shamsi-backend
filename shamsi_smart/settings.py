@@ -8,19 +8,17 @@ from datetime import timedelta
 from decouple import config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
-# تأكد من أن هذا المسار يشير إلى المجلد الرئيسي للمشروع (المكان الذي يوجد به manage.py)
 BASE_DIR = Path(__file__).resolve().parent.parent.parent 
 
 # --- Security Settings ---
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-prod-key-77-shamsi-smart')
-DEBUG = config('DEBUG', default=True, cast=bool)
+DEBUG = config('DEBUG', default=False, cast=bool) # تغيير لـ False في الإنتاج لزيادة الأمان
 
 ALLOWED_HOSTS = [
     'shamsi-backend-production.up.railway.app', 
     '.railway.app',                             
     'localhost',
     '127.0.0.1',
-    '*',                                        
 ]
 
 # --- Application definition ---
@@ -78,25 +76,22 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database Configuration ---
-# التعديل الجوهري: محاولة قراءة DATABASE_URL من البيئة (Railway) أولاً، ثم من ملف .env
-db_url = os.environ.get('DATABASE_URL') or config('DATABASE_URL', default=None)
+# التعديل الجوهري لإنهاء مشكلة localhost:
+DATABASES = {
+    'default': dj_database_url.config(
+        default=os.environ.get('DATABASE_URL') or config('DATABASE_URL', default=''),
+        conn_max_age=600,
+        conn_health_checks=True,
+    )
+}
 
-if db_url:
-    DATABASES = {
-        'default': dj_database_url.parse(db_url)
-    }
-    DATABASES['default']['CONN_MAX_AGE'] = 600
-    # تفعيل SSL فقط إذا كان الاتصال بـ Postgres أونلاين
-    if db_url.startswith('postgres'):
+# إضافة دعم PostGIS لأن مشروعك يستخدم django.contrib.gis
+if DATABASES['default']:
+    DATABASES['default']['ENGINE'] = 'django.contrib.gis.db.backends.postgis'
+    
+    # تفعيل SSL فقط عند الاتصال بقاعدة بيانات خارجية (Railway)
+    if not DEBUG and 'localhost' not in DATABASES['default'].get('HOST', ''):
         DATABASES['default']['OPTIONS'] = {'sslmode': 'require'}
-else:
-    # خيار احتياطي في حالة عدم وجود أي إعدادات (يفضل تجنبه)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
 
 # --- Static & Media Files ---
 STATIC_URL = 'static/'
@@ -132,7 +127,6 @@ CORS_ALLOW_ALL_ORIGINS = True
 CSRF_TRUSTED_ORIGINS = [
     "https://shamsi-backend-production.up.railway.app",
     "https://*.railway.app",
-    "http://localhost:8000",
 ]
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
