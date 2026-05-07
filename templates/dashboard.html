@@ -1,0 +1,176 @@
+<!-- templates/dashboard.html -->
+{% extends 'base.html' %}
+
+{% block title %}Dashboard - Shamsi Smart{% endblock %}
+
+{% block page_title %}Solar Energy Dashboard{% endblock %}
+
+{% block content %}
+<!-- Page Header -->
+<div class="d-flex justify-content-between align-items-center mb-4">
+    <h1 class="h3 mb-0 text-gray-800">{{ page_title }}</h1>
+    <div class="alert alert-info">
+        <i class="fas fa-info-circle"></i>
+        Displaying data from the new database ({{ data_years }})
+    </div>
+</div>
+
+<!-- Statistics Cards -->
+<div class="row">
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stat-card border-left-primary shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">
+                            Total Locations
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ total_locations }}</div>
+                        <div class="text-xs text-muted">locations across Egypt</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-map-marker-alt fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stat-card border-left-success shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-success text-uppercase mb-1">
+                            Avg Solar Radiation
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ avg_radiation }} kWh/m²</div>
+                        <div class="text-xs text-muted">daily average radiation</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-sun fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stat-card border-left-info shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-info text-uppercase mb-1">
+                            Data Range
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">{{ data_years }}</div>
+                        <div class="text-xs text-muted">8 years of data</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-calendar-alt fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="col-xl-3 col-md-6 mb-4">
+        <div class="card stat-card border-left-warning shadow h-100 py-2">
+            <div class="card-body">
+                <div class="row no-gutters align-items-center">
+                    <div class="col mr-2">
+                        <div class="text-xs font-weight-bold text-warning text-uppercase mb-1">
+                            Data Size
+                        </div>
+                        <div class="h5 mb-0 font-weight-bold text-gray-800">341,889</div>
+                        <div class="text-xs text-muted">daily climate records</div>
+                    </div>
+                    <div class="col-auto">
+                        <i class="fas fa-database fa-2x text-gray-300"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Success Message -->
+<div class="card border-left-success shadow mb-4">
+    <div class="card-body">
+        <div class="h5 font-weight-bold text-success mb-2">
+            <i class="fas fa-check-circle"></i> Database Updated Successfully!
+        </div>
+        <p class="text-muted">
+            Loaded <strong>341,889 daily climate records</strong> for <strong>{{ total_locations }} locations</strong> 
+            covering the period from <strong>2018 to 2026</strong>.
+        </p>
+        <a href="/admin/solar_data/location/" class="btn btn-success" target="_blank">
+            <i class="fas fa-database"></i> View All Data in Admin Panel
+        </a>
+    </div>
+</div>
+
+<!-- Top Locations Table -->
+<div class="card shadow mb-4">
+    <div class="card-header py-3">
+        <h6 class="m-0 font-weight-bold text-primary">
+            <i class="fas fa-trophy"></i> Top Locations by Solar Radiation
+        </h6>
+    </div>
+    <div class="card-body">
+        <div class="table-responsive">
+            <table class="table table-bordered">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Location</th>
+                        <th>Governorate</th>
+                        <th>Avg Radiation</th>
+                        <th>Avg Temperature</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for location in top_locations %}
+                    <tr>
+                        <td>{{ forloop.counter }}</td>
+                        <td>{{ location.name }}</td>
+                        <td>{{ location.governorate.name }}</td>
+                        <td>{{ location.avg_solar_radiation|floatformat:2 }} kWh/m²</td>
+                        <td>{{ location.avg_temperature|floatformat:1 }}°C</td>
+                        <td>
+                            <a href="{% url 'city-detail' location.location_id %}" class="btn btn-sm btn-info">
+                                <i class="fas fa-eye"></i> Details
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center text-muted">
+                            No data available. Please load the data first.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+
+<!-- Ready for React Integration -->
+<div class="card border-left-info shadow mb-4">
+    <div class="card-body">
+        <div class="h5 font-weight-bold text-info mb-2">
+            <i class="fas fa-react"></i> Ready for React Integration
+        </div>
+        <p class="text-muted">
+            This backend is fully prepared for React frontend integration. All APIs are available at:
+        </p>
+        <div class="mt-3">
+            <code>GET /api/v1/locations/</code> - List all locations<br>
+            <code>GET /api/v1/climate-data/</code> - Climate data<br>
+            <code>GET /api/v1/analysis/solar/</code> - Solar analysis
+        </div>
+    </div>
+</div>
+{% endblock %}

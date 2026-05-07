@@ -1,0 +1,17 @@
+[phases.setup]
+# Python 3.12 + psycopg2 deps. GIS packages removed - not needed without PostGIS.
+nixPkgs = ["python312", "python312Packages.pip", "postgresql", "gcc", "libpq"]
+
+[phases.install]
+cmds = [
+    "python -m venv /opt/venv",
+    ". /opt/venv/bin/activate && pip install --upgrade pip && pip install -r requirements.txt"
+]
+
+[phases.build]
+cmds = [
+    ". /opt/venv/bin/activate && python manage.py collectstatic --noinput"
+]
+
+[start]
+cmd = ". /opt/venv/bin/activate && python manage.py migrate --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"

@@ -1,0 +1,303 @@
+<!-- templates/api_docs.html -->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>API Documentation | Shamsi Smart</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <style>
+        body {
+            background-color: #f8f9fa;
+        }
+        .api-doc-header {
+            background: linear-gradient(135deg, #2c3e50 0%, #4a6572 100%);
+            color: white;
+            padding: 40px 0;
+            margin-bottom: 30px;
+        }
+        .endpoint-card {
+            border-left: 4px solid #007bff;
+            margin-bottom: 20px;
+            transition: transform 0.3s;
+        }
+        .endpoint-card:hover {
+            transform: translateY(-5px);
+        }
+        .method-get { border-color: #28a745; }
+        .method-post { border-color: #ffc107; }
+        .method-put { border-color: #17a2b8; }
+        .method-delete { border-color: #dc3545; }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            border-left: 3px solid #007bff;
+        }
+    </style>
+</head>
+<body>
+    <!-- Header -->
+    <header class="api-doc-header">
+        <div class="container">
+            <div class="row align-items-center">
+                <div class="col-md-8">
+                    <h1 class="display-4">
+                        <i class="fas fa-code"></i> Shamsi Smart API Documentation
+                    </h1>
+                    <p class="lead">
+                        RESTful API for Solar Energy Decision Support System in Egypt
+                    </p>
+                </div>
+                <div class="col-md-4 text-end">
+                    <div class="alert alert-light d-inline-block">
+                        <i class="fas fa-bolt"></i> Version: 1.0.0
+                    </div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="container">
+        <!-- Quick Start -->
+        <div class="card mb-4">
+            <div class="card-header bg-primary text-white">
+                <h5 class="mb-0"><i class="fas fa-rocket"></i> Quick Start</h5>
+            </div>
+            <div class="card-body">
+                <p><strong>Base URL:</strong> <code>http://your-domain.com/api/v1/</code></p>
+                <p><strong>Response Format:</strong> All endpoints return JSON</p>
+                <div class="alert alert-info">
+                    <i class="fas fa-info-circle"></i>
+                    For local development: <code>http://localhost:8000/api/v1/</code>
+                </div>
+            </div>
+        </div>
+
+        <!-- Endpoints -->
+        <div class="row">
+            <div class="col-md-12">
+                <h3 class="mb-4"><i class="fas fa-plug"></i> Available Endpoints</h3>
+                
+                <!-- GET Locations -->
+                <div class="card endpoint-card method-get">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <span class="badge bg-success">GET</span>
+                                <h5 class="mt-2">/api/v1/locations/</h5>
+                                <p class="text-muted">Retrieve all locations with solar potential data</p>
+                            </div>
+                            <button class="btn btn-sm btn-outline-success" data-bs-toggle="collapse" 
+                                    data-bs-target="#example1">Example</button>
+                        </div>
+                        <div class="collapse mt-3" id="example1">
+                            <pre><code>// Request
+GET /api/v1/locations/?governorate=Cairo&solar_potential__gte=70
+
+// Response
+{
+    "count": 25,
+    "next": null,
+    "previous": null,
+    "results": [
+        {
+            "id": 1,
+            "name": "Cairo Downtown",
+            "governorate": "Cairo",
+            "latitude": 30.0444,
+            "longitude": 31.2357,
+            "solar_potential_score": 85,
+            "avg_solar_radiation": 5.8
+        }
+    ]
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GET Climate Data -->
+                <div class="card endpoint-card method-get">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <span class="badge bg-success">GET</span>
+                                <h5 class="mt-2">/api/v1/climate-data/</h5>
+                                <p class="text-muted">Retrieve climate data with filtering options</p>
+                            </div>
+                            <button class="btn btn-sm btn-outline-success" data-bs-toggle="collapse" 
+                                    data-bs-target="#example2">Example</button>
+                        </div>
+                        <div class="collapse mt-3" id="example2">
+                            <pre><code>// Request
+GET /api/v1/climate-data/?location_id=1&start_date=2024-01-01&end_date=2024-01-31
+
+// Response
+{
+    "count": 31,
+    "data": [
+        {
+            "date": "2024-01-01",
+            "solar_radiation": 5.2,
+            "temperature": 18.5,
+            "humidity": 45,
+            "dust_index": 0.3
+        }
+    ]
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- POST Solar Analysis -->
+                <div class="card endpoint-card method-post">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <span class="badge bg-warning">POST</span>
+                                <h5 class="mt-2">/api/v1/solar-analysis/</h5>
+                                <p class="text-muted">Perform solar potential analysis for a location</p>
+                            </div>
+                            <button class="btn btn-sm btn-outline-warning" data-bs-toggle="collapse" 
+                                    data-bs-target="#example3">Example</button>
+                        </div>
+                        <div class="collapse mt-3" id="example3">
+                            <pre><code>// Request
+POST /api/v1/solar-analysis/
+{
+    "location_id": 1,
+    "analysis_type": "annual",
+    "parameters": {
+        "system_size": 5.0,
+        "panel_efficiency": 0.18
+    }
+}
+
+// Response
+{
+    "location_name": "Cairo Downtown",
+    "annual_energy_yield": 8760,
+    "solar_potential_score": 85,
+    "recommendations": [
+        "Excellent location for solar installation",
+        "Recommended system size: 5-7 kW"
+    ],
+    "estimated_roi": 4.5
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- GET Export Data -->
+                <div class="card endpoint-card method-get">
+                    <div class="card-body">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <div>
+                                <span class="badge bg-success">GET</span>
+                                <h5 class="mt-2">/api/v1/export/climate-data/csv/</h5>
+                                <p class="text-muted">Export climate data as CSV file</p>
+                            </div>
+                            <button class="btn btn-sm btn-outline-success" data-bs-toggle="collapse" 
+                                    data-bs-target="#example4">Example</button>
+                        </div>
+                        <div class="collapse mt-3" id="example4">
+                            <pre><code>// Request
+GET /api/v1/export/climate-data/csv/?location_id=1&format=csv
+
+// Response (CSV File Download)
+date,solar_radiation,temperature,humidity
+2024-01-01,5.2,18.5,45
+2024-01-02,5.3,19.1,44
+...</code></pre>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Authentication Section -->
+        <div class="card mt-4">
+            <div class="card-header bg-dark text-white">
+                <h5 class="mb-0"><i class="fas fa-lock"></i> Authentication</h5>
+            </div>
+            <div class="card-body">
+                <p>Currently, most endpoints are publicly accessible. For future implementation:</p>
+                <ul>
+                    <li>JWT Token-based authentication</li>
+                    <li>User roles: Admin, Company, Customer, Researcher</li>
+                    <li>Rate limiting per API key</li>
+                </ul>
+                <div class="alert alert-warning">
+                    <i class="fas fa-exclamation-triangle"></i>
+                    Authentication will be required for write operations and sensitive data.
+                </div>
+            </div>
+        </div>
+
+        <!-- Ready for React -->
+        <div class="card mt-4 border-success">
+            <div class="card-header bg-success text-white">
+                <h5 class="mb-0"><i class="fas fa-react"></i> Ready for React Integration</h5>
+            </div>
+            <div class="card-body">
+                <p>This API is fully prepared for React frontend integration:</p>
+                <ul>
+                    <li>CORS enabled for cross-origin requests</li>
+                    <li>JSON responses optimized for React state management</li>
+                    <li>Pagination support for large datasets</li>
+                    <li>Error handling with consistent response format</li>
+                </ul>
+                <h6 class="mt-3">React Example:</h6>
+                <pre><code>// React component fetching data
+import React, { useEffect, useState } from 'react';
+import axios from 'axios';
+
+const LocationsList = () => {
+    const [locations, setLocations] = useState([]);
+    
+    useEffect(() => {
+        axios.get('http://localhost:8000/api/v1/locations/')
+            .then(response => setLocations(response.data.results))
+            .catch(error => console.error('Error:', error));
+    }, []);
+    
+    return (
+        <div>
+            {locations.map(location => (
+                <div key={location.id}>
+                    <h3>{location.name}</h3>
+                    <p>Solar Potential: {location.solar_potential_score}%</p>
+                </div>
+            ))}
+        </div>
+    );
+};</code></pre>
+            </div>
+        </div>
+
+        <!-- Footer -->
+        <div class="text-center mt-5 mb-5">
+            <a href="/" class="btn btn-primary btn-lg">
+                <i class="fas fa-home"></i> Back to Dashboard
+            </a>
+        </div>
+    </div>
+
+    <!-- Scripts -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        // Auto-collapse all examples except first
+        document.addEventListener('DOMContentLoaded', function() {
+            const collapseElements = document.querySelectorAll('.collapse');
+            collapseElements.forEach((el, index) => {
+                if (index !== 0) {
+                    el.classList.remove('show');
+                }
+            });
+        });
+    </script>
+</body>
+</html>
