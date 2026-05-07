@@ -1,6 +1,6 @@
 [phases.setup]
 # Python 3.12 + psycopg2 deps. GIS packages removed - not needed without PostGIS.
-nixPkgs = ["python312", "python312Packages.pip", "postgresql", "gcc", "libpq"]
+nixPkgs = ["python312", "python312Packages.pip", "postgresql", "gcc"]
 
 [phases.install]
 cmds = [
