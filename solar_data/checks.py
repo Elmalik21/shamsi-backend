@@ -297,7 +297,7 @@ def check_application_dependencies(app_configs, **kwargs):
             'django',
             'djangorestframework',
             'django-filter',
-            'drf-yasg',
+            # 'drf-yasg',  # removed — incompatible with Python 3.12 Nix venv
             'psycopg2-binary',  # PostgreSQL
             'django-cors-headers',
             'python-dateutil',

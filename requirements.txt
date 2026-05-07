@@ -8,7 +8,7 @@ Django==5.1.7
 djangorestframework==3.15.2
 django-cors-headers==4.4.0
 django-filter==24.3
-drf-yasg==1.21.7
+# drf-yasg==1.21.7  # REMOVED — incompatible with Python 3.12 (pkg_resources missing in Nix venv)
 
 # ── Database ──────────────────────────────
 psycopg2-binary==2.9.9
@@ -22,7 +22,6 @@ joblib==1.4.2
 scipy==1.13.1
 
 # ── Deployment ────────────────────────────
-setuptools>=70.0  # required by drf-yasg (pkg_resources) on Python 3.12
 gunicorn==21.2.0
 whitenoise==6.6.0
 python-decouple==3.8

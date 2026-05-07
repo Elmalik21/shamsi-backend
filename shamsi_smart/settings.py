@@ -33,7 +33,7 @@ INSTALLED_APPS = [
     'rest_framework.authtoken',
     'corsheaders',
     'django_filters',
-    'drf_yasg',
+    # drf_yasg removed — pkg_resources unavailable in Python 3.12 Nix venv
     'solar_data',
     'api',
     'dashboard',
