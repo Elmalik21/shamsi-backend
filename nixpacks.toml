@@ -10,8 +10,8 @@ cmds = [
 
 [phases.build]
 cmds = [
-    ". /opt/venv/bin/activate && python manage.py collectstatic --noinput"
+    "export DJANGO_SETTINGS_MODULE=shamsi_smart.settings && . /opt/venv/bin/activate && python manage.py collectstatic --noinput"
 ]
 
 [start]
-cmd = ". /opt/venv/bin/activate && python manage.py migrate --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"
+cmd = "export DJANGO_SETTINGS_MODULE=shamsi_smart.settings && . /opt/venv/bin/activate && python manage.py migrate --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"
