@@ -1,5 +1,5 @@
 [phases.setup]
-# Python 3.12 + psycopg2 deps. GIS packages removed - not needed without PostGIS.
+# Python 3.12 + psycopg2 deps. GIS packages removed - not needed without PostGIS. cache-bust=2
 nixPkgs = ["python312", "python312Packages.pip", "postgresql", "gcc"]
 
 [phases.install]
@@ -14,4 +14,4 @@ cmds = [
 ]
 
 [start]
-cmd = "export DJANGO_SETTINGS_MODULE=shamsi_smart.settings && . /opt/venv/bin/activate && python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"
+cmd = "export DJANGO_SETTINGS_MODULE=shamsi_smart.settings && . /opt/venv/bin/activate && python -c \"import os,sys; print('[debug] settings file:', os.path.abspath('shamsi_smart/settings.py'), file=sys.stderr); import shamsi_smart.settings\" && python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120"
