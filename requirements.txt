@@ -24,7 +24,7 @@ scipy==1.13.1
 # ── Deployment ────────────────────────────
 gunicorn==21.2.0
 whitenoise==6.6.0
-python-decouple==3.8
+# python-decouple==3.8  # REMOVED — using os.environ directly for Railway compatibility
 
 # ── Utilities ─────────────────────────────
 requests==2.32.3

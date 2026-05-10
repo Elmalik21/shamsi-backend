@@ -2,14 +2,16 @@
 Shamsi Smart Project Settings - Optimized for Railway & Production
 """
 import os
+import sys
 from pathlib import Path
-from decouple import config
+
+print("[settings.py] Loading started", file=sys.stderr)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # --- Security ---
-SECRET_KEY = config('SECRET_KEY', default='django-insecure-prod-key-77-shamsi-smart')
-DEBUG = config('DEBUG', default=False, cast=bool)
+SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-prod-key-77-shamsi-smart'))
+DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() in ('true', '1', 'yes')
 
 ALLOWED_HOSTS = [
     'shamsi-backend-production.up.railway.app',
