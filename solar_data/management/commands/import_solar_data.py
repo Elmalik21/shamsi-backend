@@ -119,7 +119,6 @@ class Command(BaseCommand):
                                             'governorate': governorate,
                                             'latitude': lat,
                                             'longitude': lon,
-                                            'data_source': 'NASA POWER CSV Import',
                                         }
                                     )
                                     processed_locations[location_id] = location
@@ -166,18 +165,14 @@ class Command(BaseCommand):
                                 climate_data = DailyClimateData(
                                     location=location,
                                     date=date,
-                                    allsky_sfc_sw_dwn=self._safe_float(row[column_map['allsky_sfc_sw_dwn']]),
-                                    t2m=self._safe_float(row[column_map['t2m']]),
+                                    allsky_sfc_sw_dwn=self._safe_float(row[column_map['allsky_sfc_sw_dwn']]) or 0,
+                                    t2m=self._safe_float(row[column_map['t2m']]) or 0,
                                     t2m_max=self._safe_float(row[column_map['t2m_max']]),
                                     t2m_min=self._safe_float(row[column_map['t2m_min']]),
-                                    rh2m=self._safe_float(row[column_map['rh2m']]),
-                                    ws2m=self._safe_float(row[column_map['ws2m']]),
-                                    allsky_sfc_sw_dni=self._safe_float(row[column_map['allsky_sfc_sw_dni']]),
-                                    allsky_sfc_sw_diff=self._safe_float(row[column_map['allsky_sfc_sw_diff']]),
+                                    rh2m=self._safe_float(row[column_map['rh2m']]) or 0,
+                                    ws2m=self._safe_float(row[column_map['ws2m']]) or 0,
                                     cloud_amt=self._safe_float(row[column_map['cloud_amt']]),
-                                    allsky_srf_alb=self._safe_float(row[column_map['allsky_srf_alb']]),
-                                    ps=self._safe_float(row[column_map['ps']]),
-                                    prectotcorr=self._safe_float(row[column_map['prectotcorr']]),
+                                    prectotcorr=self._safe_float(row[column_map['prectotcorr']]) or 0,
                                 )
                                 
                                 climate_data_to_create.append(climate_data)
