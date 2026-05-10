@@ -2,7 +2,6 @@
 Shamsi Smart Project Settings - Optimized for Railway & Production
 """
 import os
-import dj_database_url
 from pathlib import Path
 from decouple import config
 
@@ -73,24 +72,23 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database ---
-_DATABASE_URL = os.environ.get('DATABASE_URL') or config('DATABASE_URL', default='')
+_DATABASE_URL = os.environ.get('DATABASE_URL') or os.environ.get('DATABASE_PUBLIC_URL') or ''
+try:
+    from decouple import config as _config
+    _DATABASE_URL = _DATABASE_URL or _config('DATABASE_URL', default='')
+except Exception:
+    pass
 
 if _DATABASE_URL:
-    DATABASES = {
-        'default': dj_database_url.config(
-            default=_DATABASE_URL,
-            conn_max_age=600,
-            conn_health_checks=True,
-        )
-    }
-    # Force standard postgresql engine (NOT postgis — PostGIS not available on Railway free tier)
-    engine = DATABASES['default'].get('ENGINE', '')
-    if 'postgis' in engine or not engine:
-        DATABASES['default']['ENGINE'] = 'django.db.backends.postgresql'
-    if not DEBUG and 'localhost' not in DATABASES['default'].get('HOST', ''):
-        DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = 'require'
+    import dj_database_url as _dj
+    _db = _dj.parse(_DATABASE_URL, conn_max_age=600, conn_health_checks=True)
+    # Force standard postgresql (not postgis)
+    if not _db.get('ENGINE') or 'postgis' in _db.get('ENGINE', ''):
+        _db['ENGINE'] = 'django.db.backends.postgresql'
+    if not DEBUG:
+        _db.setdefault('OPTIONS', {})['sslmode'] = 'require'
+    DATABASES = {'default': _db}
 else:
-    # Fallback to SQLite for local dev without DATABASE_URL
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
