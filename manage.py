@@ -6,7 +6,10 @@ import sys
 
 def main():
     """Run administrative tasks."""
-    os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'shamsi_smart.settings')
+    # Force correct settings — override any env var that points elsewhere
+    os.environ['DJANGO_SETTINGS_MODULE'] = 'shamsi_smart.settings'
+    print(f"[manage.py] DJANGO_SETTINGS_MODULE={os.environ['DJANGO_SETTINGS_MODULE']}", file=sys.stderr)
+    print(f"[manage.py] DATABASE_URL present={bool(os.environ.get('DATABASE_URL'))}", file=sys.stderr)
     try:
         from django.core.management import execute_from_command_line
     except ImportError as exc:
