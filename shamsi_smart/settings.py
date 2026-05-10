@@ -73,21 +73,30 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database ---
-DATABASES = {
-    'default': dj_database_url.config(
-        default=os.environ.get('DATABASE_URL') or config('DATABASE_URL', default='sqlite:///db.sqlite3'),
-        conn_max_age=600,
-        conn_health_checks=True,
-    )
-}
+_DATABASE_URL = os.environ.get('DATABASE_URL') or config('DATABASE_URL', default='')
 
-# Force standard postgresql engine (NOT postgis — PostGIS not available on Railway free tier)
-if DATABASES.get('default'):
+if _DATABASE_URL:
+    DATABASES = {
+        'default': dj_database_url.config(
+            default=_DATABASE_URL,
+            conn_max_age=600,
+            conn_health_checks=True,
+        )
+    }
+    # Force standard postgresql engine (NOT postgis — PostGIS not available on Railway free tier)
     engine = DATABASES['default'].get('ENGINE', '')
     if 'postgis' in engine or not engine:
         DATABASES['default']['ENGINE'] = 'django.db.backends.postgresql'
     if not DEBUG and 'localhost' not in DATABASES['default'].get('HOST', ''):
         DATABASES['default'].setdefault('OPTIONS', {})['sslmode'] = 'require'
+else:
+    # Fallback to SQLite for local dev without DATABASE_URL
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
 
 # --- Static files ---
 STATIC_URL = 'static/'
