@@ -72,23 +72,29 @@ TEMPLATES = [
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
 # --- Database ---
-_DATABASE_URL = os.environ.get('DATABASE_URL') or os.environ.get('DATABASE_PUBLIC_URL') or ''
-try:
-    from decouple import config as _config
-    _DATABASE_URL = _DATABASE_URL or _config('DATABASE_URL', default='')
-except Exception:
-    pass
+# Parse DATABASE_URL manually — avoids dj_database_url edge cases on Railway
+import urllib.parse as _urlparse
+import sys as _sys
+
+_DATABASE_URL = os.environ.get('DATABASE_URL', '')
+print(f"[settings] DATABASE_URL present: {bool(_DATABASE_URL)}", file=_sys.stderr)
 
 if _DATABASE_URL:
-    import dj_database_url as _dj
-    _db = _dj.parse(_DATABASE_URL, conn_max_age=600, conn_health_checks=True)
-    # Force standard postgresql (not postgis)
-    if not _db.get('ENGINE') or 'postgis' in _db.get('ENGINE', ''):
-        _db['ENGINE'] = 'django.db.backends.postgresql'
-    if not DEBUG:
-        _db.setdefault('OPTIONS', {})['sslmode'] = 'require'
-    DATABASES = {'default': _db}
+    _u = _urlparse.urlparse(_DATABASE_URL)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': _u.path.lstrip('/'),
+            'USER': _u.username,
+            'PASSWORD': _u.password,
+            'HOST': _u.hostname,
+            'PORT': str(_u.port or 5432),
+            'CONN_MAX_AGE': 600,
+            'OPTIONS': {'sslmode': 'require'} if not DEBUG else {},
+        }
+    }
 else:
+    print("[settings] WARNING: DATABASE_URL not set, using SQLite", file=_sys.stderr)
     DATABASES = {
         'default': {
             'ENGINE': 'django.db.backends.sqlite3',
