@@ -3,7 +3,7 @@
     "builder": "NIXPACKS"
   },
   "deploy": {
-    "startCommand": "export DJANGO_SETTINGS_MODULE=shamsi_smart.settings && . /opt/venv/bin/activate && python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120",
+    "startCommand": "export DJANGO_SETTINGS_MODULE=shamsi_smart.settings && . /opt/venv/bin/activate && python -c \"import sys; print('[start] python ok', file=sys.stderr); import shamsi_smart.settings; print('[start] settings loaded, DB ENGINE='+shamsi_smart.settings.DATABASES['default'].get('ENGINE','MISSING'), file=sys.stderr)\" && python manage.py migrate --noinput && python manage.py collectstatic --noinput && gunicorn shamsi_smart.wsgi:application --workers 3 --bind 0.0.0.0:$PORT --timeout 120",
     "restartPolicyType": "ON_FAILURE",
     "restartPolicyMaxRetries": 3
   }
