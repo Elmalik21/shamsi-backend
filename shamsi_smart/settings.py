@@ -13,6 +13,34 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.environ.get('SECRET_KEY', os.environ.get('DJANGO_SECRET_KEY', 'django-insecure-prod-key-77-shamsi-smart'))
 DEBUG = os.environ.get('DEBUG', os.environ.get('DJANGO_DEBUG', 'False')).lower() in ('true', '1', 'yes')
 
+# --- Database (defined early to avoid partial module load issues) ---
+_db_url = os.environ.get('DATABASE_URL', '')
+print(f"[settings.py] DATABASE_URL present={bool(_db_url)}", file=sys.stderr)
+if _db_url:
+    import urllib.parse as _up
+    _u = _up.urlparse(_db_url)
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.postgresql',
+            'NAME': _u.path.lstrip('/'),
+            'USER': _u.username or '',
+            'PASSWORD': _u.password or '',
+            'HOST': _u.hostname or '',
+            'PORT': str(_u.port or 5432),
+            'CONN_MAX_AGE': 600,
+            'OPTIONS': {'sslmode': 'require'},
+        }
+    }
+    print(f"[settings.py] DATABASES set to postgresql host={_u.hostname}", file=sys.stderr)
+else:
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3',
+        }
+    }
+    print("[settings.py] DATABASES set to sqlite3 (no DATABASE_URL)", file=sys.stderr)
+
 ALLOWED_HOSTS = [
     'shamsi-backend-production.up.railway.app',
     '.railway.app',
@@ -73,36 +101,7 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'shamsi_smart.wsgi.application'
 
-# --- Database ---
-# Parse DATABASE_URL manually — avoids dj_database_url edge cases on Railway
-import urllib.parse as _urlparse
-import sys as _sys
-
-_DATABASE_URL = os.environ.get('DATABASE_URL', '')
-print(f"[settings] DATABASE_URL present: {bool(_DATABASE_URL)}", file=_sys.stderr)
-
-if _DATABASE_URL:
-    _u = _urlparse.urlparse(_DATABASE_URL)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.postgresql',
-            'NAME': _u.path.lstrip('/'),
-            'USER': _u.username,
-            'PASSWORD': _u.password,
-            'HOST': _u.hostname,
-            'PORT': str(_u.port or 5432),
-            'CONN_MAX_AGE': 600,
-            'OPTIONS': {'sslmode': 'require'} if not DEBUG else {},
-        }
-    }
-else:
-    print("[settings] WARNING: DATABASE_URL not set, using SQLite", file=_sys.stderr)
-    DATABASES = {
-        'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3',
-        }
-    }
+# DATABASES defined earlier in file (after SECRET_KEY)
 
 # --- Static files ---
 STATIC_URL = 'static/'
