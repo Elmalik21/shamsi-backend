@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1"/>
+  <title>Shamsi Admin — Login</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet"/>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet"/>
+  <style>
+    body { background: #0f172a; color: #e2e8f0; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+    .login-card { background: #1e293b; border: 1px solid #334155; border-radius: 16px; padding: 2.5rem; width: 100%; max-width: 400px; }
+    .brand { font-size: 1.5rem; font-weight: 700; color: #f59e0b; display: flex; align-items: center; gap: .5rem; margin-bottom: 1.75rem; }
+    .brand i { font-size: 1.8rem; }
+    .form-control { background: #0f172a; border: 1px solid #334155; color: #e2e8f0; border-radius: 8px; padding: .65rem 1rem; }
+    .form-control:focus { border-color: #f59e0b; box-shadow: 0 0 0 3px rgba(245,158,11,.15); background: #0f172a; color: #e2e8f0; }
+    .form-label { font-size: .85rem; color: #94a3b8; margin-bottom: .35rem; }
+    .btn-login { background: #f59e0b; color: #0f172a; font-weight: 700; border: none; border-radius: 8px; padding: .7rem; width: 100%; font-size: .95rem; }
+    .btn-login:hover { background: #d97706; color: #0f172a; }
+    .alert-err { background: rgba(239,68,68,.12); border: 1px solid rgba(239,68,68,.3); color: #f87171; border-radius: 8px; padding: .65rem 1rem; font-size: .85rem; margin-bottom: 1rem; }
+    .subtitle { color: #64748b; font-size: .82rem; margin-bottom: 1.75rem; }
+  </style>
+</head>
+<body>
+  <div class="login-card">
+    <div class="brand"><i class="bi bi-sun-fill"></i> Shamsi Admin</div>
+    <p class="subtitle">Solar Energy Intelligence Platform — Admin Access</p>
+
+    {% if error %}
+    <div class="alert-err"><i class="bi bi-exclamation-triangle-fill"></i> {{ error }}</div>
+    {% endif %}
+
+    <form method="post">
+      {% csrf_token %}
+      <div class="mb-3">
+        <label class="form-label">Username</label>
+        <input name="username" type="text" class="form-control" placeholder="admin" autofocus required/>
+      </div>
+      <div class="mb-4">
+        <label class="form-label">Password</label>
+        <input name="password" type="password" class="form-control" placeholder="••••••••" required/>
+      </div>
+      <button type="submit" class="btn-login">
+        <i class="bi bi-box-arrow-in-right"></i> Sign In
+      </button>
+    </form>
+
+    <p style="margin-top:1.5rem;text-align:center;font-size:.78rem;color:#475569;">
+      Staff accounts only &nbsp;·&nbsp; Shamsi Smart v1.0
+    </p>
+  </div>
+</body>
+</html>

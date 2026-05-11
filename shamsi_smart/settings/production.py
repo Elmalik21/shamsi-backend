@@ -77,7 +77,9 @@ USE_X_FORWARDED_PORT = True
 
 LOGGING = {'version': 1, 'disable_existing_loggers': False, 'handlers': {'console': {'class': 'logging.StreamHandler'}}, 'loggers': {'django': {'handlers': ['console'], 'level': 'INFO'}}}
 SOLAR_DATA_YEARS = list(range(2018, 2027))
+
+# Dashboard auth
+LOGIN_URL = '/login/'
+LOGIN_REDIRECT_URL = '/'
 for _p in ['media', 'staticfiles']:
     os.makedirs(BASE_DIR / _p, exist_ok=True)
-
-print("[production.py] Loading complete", file=sys.stderr)

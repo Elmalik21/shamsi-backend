@@ -1,0 +1,151 @@
+{% extends "dashboard/base.html" %}
+{% block title %}{{ loc.name }} — Shamsi Admin{% endblock %}
+{% block topbar_title %}{{ loc.name }} · Location Detail{% endblock %}
+
+{% block content %}
+<!-- Header -->
+<div class="d-flex align-items-center gap-3 mb-4">
+  <a href="{% url 'dash:locations' %}" style="color:#94a3b8;text-decoration:none;font-size:.88rem;"><i class="bi bi-arrow-left"></i> Locations</a>
+  <span style="color:#334155;">/</span>
+  <span style="color:#f59e0b;font-weight:600;">{{ loc.name }}</span>
+  <span class="score-badge {% if rating == 'Excellent' %}score-excellent{% elif rating == 'Very Good' %}score-verygood{% elif rating == 'Good' %}score-good{% else %}score-moderate{% endif %}" style="margin-left:.5rem;">
+    {{ rating }}
+  </span>
+</div>
+
+<!-- Info + Stats -->
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="card-dark h-100">
+      <h6 class="fw-semibold mb-3"><i class="bi bi-info-circle text-warning me-2"></i>Location Info</h6>
+      <table style="width:100%;font-size:.85rem;">
+        <tr><td style="color:#64748b;padding:.3rem 0;">Governorate</td><td style="text-align:right;">{{ loc.governorate.name }}</td></tr>
+        <tr><td style="color:#64748b;padding:.3rem 0;">Coordinates</td><td style="text-align:right;font-size:.8rem;">{{ loc.latitude|floatformat:5 }}, {{ loc.longitude|floatformat:5 }}</td></tr>
+        <tr><td style="color:#64748b;padding:.3rem 0;">Type</td><td style="text-align:right;">{{ loc.location_type }}</td></tr>
+        <tr><td style="color:#64748b;padding:.3rem 0;">Solar Score</td>
+          <td style="text-align:right;">
+            {% if loc.solar_potential_score %}<strong style="color:#f59e0b;">{{ loc.solar_potential_score|floatformat:1 }}/100</strong>
+            {% else %}—{% endif %}
+          </td>
+        </tr>
+        <tr><td style="color:#64748b;padding:.3rem 0;">Category</td><td style="text-align:right;">{{ loc.solar_potential_category }}</td></tr>
+        <tr><td style="color:#64748b;padding:.3rem 0;">Data Records</td><td style="text-align:right;">{{ stats.days }}</td></tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="col-md-8">
+    <div class="row g-3">
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#f59e0b;font-weight:700;">{{ stats.avg_rad|default:"—" }}</div>
+          <div style="font-size:.75rem;color:#64748b;">Avg Radiation<br/>kWh/m²/day</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#f59e0b;font-weight:700;">{{ stats.max_rad|default:"—" }}</div>
+          <div style="font-size:.75rem;color:#64748b;">Peak Radiation<br/>kWh/m²/day</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#ef4444;font-weight:700;">{{ stats.avg_tmp|default:"—" }}°</div>
+          <div style="font-size:.75rem;color:#64748b;">Avg Temp °C<br/>&nbsp;</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#3b82f6;font-weight:700;">{{ stats.avg_hum|default:"—" }}%</div>
+          <div style="font-size:.75rem;color:#64748b;">Avg Humidity<br/>&nbsp;</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#ef4444;font-weight:700;">{{ stats.max_tmp|default:"—" }}°</div>
+          <div style="font-size:.75rem;color:#64748b;">Max Temp °C<br/>&nbsp;</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#06b6d4;font-weight:700;">{{ stats.min_tmp|default:"—" }}°</div>
+          <div style="font-size:.75rem;color:#64748b;">Min Temp °C<br/>&nbsp;</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#10b981;font-weight:700;">{{ stats.avg_wnd|default:"—" }}</div>
+          <div style="font-size:.75rem;color:#64748b;">Avg Wind<br/>m/s</div>
+        </div>
+      </div>
+      <div class="col-6 col-md-3">
+        <div class="card-dark text-center">
+          <div style="font-size:1.5rem;color:#3b82f6;font-weight:700;">{{ stats.total_rain|default:"—" }}</div>
+          <div style="font-size:.75rem;color:#64748b;">Total Rain<br/>mm</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Daily chart (last 90 days) -->
+<div class="card-dark mb-4">
+  <h6 class="fw-semibold mb-3"><i class="bi bi-graph-up text-warning me-2"></i>Last 90 Days — Daily Climate Data</h6>
+  <div style="height:280px;"><canvas id="dailyChart"></canvas></div>
+</div>
+
+<!-- Monthly trend -->
+<div class="card-dark mb-4">
+  <h6 class="fw-semibold mb-3"><i class="bi bi-calendar3 text-warning me-2"></i>Monthly Averages (2018–2026)</h6>
+  <div style="height:250px;"><canvas id="monthlyChart"></canvas></div>
+</div>
+
+{% endblock %}
+
+{% block extra_js %}
+<script>
+const DAILY   = {{ daily_chart|safe }};
+const MONTHLY = {{ monthly_chart|safe }};
+
+new Chart(document.getElementById('dailyChart'), {
+  type: 'line',
+  data: {
+    labels: DAILY.dates,
+    datasets: [
+      { label: 'Radiation', data: DAILY.radiation, borderColor: '#f59e0b', backgroundColor: 'rgba(245,158,11,.07)', tension: .3, yAxisID: 'y' },
+      { label: 'Temp °C',   data: DAILY.temperature, borderColor: '#ef4444', backgroundColor: 'rgba(239,68,68,.07)', tension: .3, yAxisID: 'y1' },
+      { label: 'Humidity %',data: DAILY.humidity, borderColor: '#3b82f6', tension: .3, yAxisID: 'y1', borderDash:[4,4] },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+    scales: {
+      x:  { ticks: { color: '#64748b', maxTicksLimit: 10 }, grid: { color: '#1e2d3d' } },
+      y:  { ticks: { color: '#94a3b8' }, grid: { color: '#1e2d3d' }, title: { display: true, text: 'kWh/m²', color: '#64748b' } },
+      y1: { position: 'right', ticks: { color: '#94a3b8' }, grid: { drawOnChartArea: false } },
+    }
+  }
+});
+
+new Chart(document.getElementById('monthlyChart'), {
+  type: 'bar',
+  data: {
+    labels: MONTHLY.labels,
+    datasets: [
+      { label: 'Avg Radiation', data: MONTHLY.radiation, backgroundColor: 'rgba(245,158,11,.6)', borderColor: '#f59e0b', borderWidth: 1, yAxisID: 'y' },
+      { label: 'Avg Temp °C',   data: MONTHLY.temp, type: 'line', borderColor: '#ef4444', backgroundColor: 'transparent', tension: .4, yAxisID: 'y1' },
+    ]
+  },
+  options: {
+    responsive: true, maintainAspectRatio: false,
+    plugins: { legend: { labels: { color: '#94a3b8', boxWidth: 12 } } },
+    scales: {
+      x:  { ticks: { color: '#64748b', maxTicksLimit: 24 }, grid: { color: '#1e2d3d' } },
+      y:  { ticks: { color: '#94a3b8' }, grid: { color: '#1e2d3d' }, title: { display: true, text: 'kWh/m²', color: '#64748b' } },
+      y1: { position: 'right', ticks: { color: '#94a3b8' }, grid: { drawOnChartArea: false }, title: { display: true, text: '°C', color: '#64748b' } },
+    }
+  }
+});
+</script>
+{% endblock %}

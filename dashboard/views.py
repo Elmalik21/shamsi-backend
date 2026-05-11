@@ -1,307 +1,393 @@
-from django.shortcuts import render, get_object_or_404
-# استيراد دوال التجميع المطلوبة بشكل صريح
+"""
+Shamsi Smart — Dynamic Admin Dashboard Views
+"""
+import json
+from datetime import datetime, timedelta
+from django.shortcuts import render, redirect
+from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth.decorators import login_required, user_passes_test
 from django.db.models import Avg, Max, Min, Count, Sum, Q
 from django.http import JsonResponse
-from datetime import datetime, timedelta
-import json
-from solar_data.models import Location, DailyClimateData, MonthlySummary
+from django.views.decorators.http import require_GET
 
-# ==========================================
-# Main Views
-# ==========================================
+from solar_data.models import (
+    Governorate, Location, DailyClimateData,
+    MonthlySummary, ElectricityTariff, SolarPanel,
+    Inverter, InstallationCost, DesignProject,
+)
 
-def dashboard_view(request):
-    """لوحة التحكم الرئيسية"""
-    # إحصائيات عامة
+
+def is_staff(user):
+    return user.is_authenticated and user.is_staff
+
+
+# ── Auth ──────────────────────────────────────
+
+def login_view(request):
+    if request.user.is_authenticated:
+        return redirect('dash:home')
+    error = None
+    if request.method == 'POST':
+        user = authenticate(request,
+            username=request.POST.get('username', ''),
+            password=request.POST.get('password', ''))
+        if user and user.is_staff:
+            login(request, user)
+            return redirect(request.GET.get('next', 'dash:home'))
+        error = 'Invalid credentials or insufficient permissions.'
+    return render(request, 'dashboard/login.html', {'error': error})
+
+
+def logout_view(request):
+    logout(request)
+    return redirect('dash:login')
+
+
+# ── Home ──────────────────────────────────────
+
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def home(request):
     total_locations = Location.objects.count()
-    
-    # متوسط الإشعاع الشمسي العام
-    avg_radiation = DailyClimateData.objects.aggregate(
-        avg=Avg('allsky_sfc_sw_dwn')
-    )['avg'] or 0
-    
-    # أفضل 5 مواقع (التي لها قراءة إشعاع)
-    top_locations = Location.objects.filter(
-        avg_solar_radiation__isnull=False
-    ).order_by('-avg_solar_radiation')[:5]
-    
-    # إحصائيات المحافظات - تجميع ذكي لتقليل الاستعلامات
-    governorate_stats = []
-    processed_govs = set()
-    
-    # نستخدم select_related لتقليل الضغط على قاعدة البيانات
-    locations_with_gov = Location.objects.select_related('governorate').all()
-    
-    for location in locations_with_gov:
-        if location.governorate and location.governorate.name not in processed_govs:
-            gov_locations = locations_with_gov.filter(governorate=location.governorate)
-            
-            # حساب المتوسط يدوياً للقائمة المفلترة
-            rads = [l.avg_solar_radiation for l in gov_locations if l.avg_solar_radiation]
-            avg_gov_radiation = sum(rads) / len(rads) if rads else 0
-            
-            governorate_stats.append({
-                'name': location.governorate.name,
-                'location_count': gov_locations.count(),
-                'avg_radiation': avg_gov_radiation
-            })
-            processed_govs.add(location.governorate.name)
-    
-    # ترتيب المحافظات حسب الإشعاع (الأعلى أولاً)
-    governorate_stats = sorted(governorate_stats, key=lambda x: x['avg_radiation'], reverse=True)
-    
+    total_govs      = Governorate.objects.count()
+    total_climate   = DailyClimateData.objects.count()
+    total_projects  = DesignProject.objects.count()
+
+    agg = DailyClimateData.objects.aggregate(
+        avg_rad=Avg('allsky_sfc_sw_dwn'),
+        avg_tmp=Avg('t2m'),
+        max_rad=Max('allsky_sfc_sw_dwn'),
+    )
+    avg_radiation = round(agg['avg_rad'] or 0, 3)
+    avg_temp      = round(agg['avg_tmp'] or 0, 1)
+    max_radiation = round(agg['max_rad'] or 0, 3)
+
+    top_locations = (
+        Location.objects.select_related('governorate')
+        .filter(solar_potential_score__isnull=False)
+        .order_by('-solar_potential_score')[:10]
+    )
+
+    gov_radiation = (
+        DailyClimateData.objects
+        .values('location__governorate__name')
+        .annotate(avg_rad=Avg('allsky_sfc_sw_dwn'))
+        .order_by('-avg_rad')[:15]
+    )
+    gov_chart = {
+        'labels': [r['location__governorate__name'] for r in gov_radiation],
+        'values': [round(r['avg_rad'], 3) for r in gov_radiation],
+    }
+
+    monthly_trend = (
+        DailyClimateData.objects
+        .values('date__year', 'date__month')
+        .annotate(avg_rad=Avg('allsky_sfc_sw_dwn'), avg_tmp=Avg('t2m'))
+        .order_by('date__year', 'date__month')
+    )
+    trend_chart = {
+        'labels':      ["%s-%02d" % (r['date__year'], r['date__month']) for r in monthly_trend],
+        'radiation':   [round(r['avg_rad'], 3) for r in monthly_trend],
+        'temperature': [round(r['avg_tmp'], 1) for r in monthly_trend],
+    }
+
+    cat_dist = (
+        Location.objects
+        .values('solar_potential_category')
+        .annotate(count=Count('id'))
+    )
+    cat_chart = {
+        'labels': [r['solar_potential_category'] or 'UNKNOWN' for r in cat_dist],
+        'values': [r['count'] for r in cat_dist],
+    }
+
     context = {
+        'page': 'home',
         'total_locations': total_locations,
-        'avg_radiation': round(avg_radiation, 2),
+        'total_govs': total_govs,
+        'total_climate': total_climate,
+        'total_projects': total_projects,
+        'avg_radiation': avg_radiation,
+        'avg_temp': avg_temp,
+        'max_radiation': max_radiation,
         'top_locations': top_locations,
-        'governorate_stats': governorate_stats[:10],  # أفضل 10 محافظات
-        'page_title': 'لوحة تحكم شماسي سمارت',
+        'gov_chart': json.dumps(gov_chart),
+        'trend_chart': json.dumps(trend_chart),
+        'cat_chart': json.dumps(cat_chart),
         'data_years': '2018-2026',
-        'data_source': f'البيانات الجديدة ({DailyClimateData.objects.count()}+ سجل)',
     }
-    
-    return render(request, 'dashboard.html', context)
+    return render(request, 'dashboard/home.html', context)
 
 
-def city_detail_view(request, city_id=None):
-    """تفاصيل موقع معين مع التحليل والتوصيات"""
-    if not city_id:
-        return render(request, 'city_detail.html', {
-            'error': 'لم يتم تحديد موقع', 
-            'page_title': 'خطأ'
-        })
-    
-    try:
-        # البحث عن الموقع باستخدام location_id أو id
-        location = Location.objects.filter(location_id=city_id).first()
-        if not location:
-             location = Location.objects.filter(id=city_id).first()
-             
-        if not location:
-            raise Location.DoesNotExist
+# ── Locations ─────────────────────────────────
 
-        # البيانات المناخية لهذا الموقع
-        climate_data = DailyClimateData.objects.filter(location=location).order_by('-date')
-        
-        # ملخصات شهرية
-        monthly_summaries = MonthlySummary.objects.filter(
-            location=location
-        ).order_by('-year', '-month')
-        
-        # إحصائيات عامة (Aggregate)
-        stats = DailyClimateData.objects.filter(location=location).aggregate(
-            avg_radiation=Avg('allsky_sfc_sw_dwn'),
-            max_radiation=Max('allsky_sfc_sw_dwn'),
-            min_radiation=Min('allsky_sfc_sw_dwn'),
-            avg_temp=Avg('t2m'),
-            max_temp=Max('t2m_max'),
-            min_temp=Min('t2m_min'),
-            avg_humidity=Avg('rh2m'),
-            avg_wind=Avg('ws2m'),
-            total_precipitation=Sum('prectotcorr'),
-            total_days=Count('id')
-        )
-        
-        # بيانات الشهر الحالي
-        current_year = datetime.now().year
-        current_month = datetime.now().month
-        
-        current_month_data = DailyClimateData.objects.filter(
-            location=location,
-            date__year=current_year,
-            date__month=current_month
-        )
-        
-        # أفضل وأسوأ أشهر
-        best_month = monthly_summaries.order_by('-avg_radiation').first()
-        worst_month = monthly_summaries.order_by('avg_radiation').first()
-        
-        # بيانات الرسم البياني (آخر 30 يوم)
-        last_30_days = climate_data[:30]
-        
-        # إعداد بيانات JSON للرسم البياني
-        # نستخدم[::-1] لعكس الترتيب بحيث يظهر التاريخ القديم على اليسار في الرسم البياني
-        chart_data = {
-            'dates': [str(data.date) for data in last_30_days][::-1], 
-            'radiation': [float(data.allsky_sfc_sw_dwn or 0) for data in last_30_days][::-1],
-            'temperature': [float(data.t2m or 0) for data in last_30_days][::-1],
-            'humidity': [float(data.rh2m or 0) for data in last_30_days][::-1],
-            'wind': [float(data.ws2m or 0) for data in last_30_days][::-1],
-        }
-        
-        # تحليل وتوصيات
-        solar_analysis = analyze_solar_potential(location)
-        recommendations = generate_solar_recommendations(location, stats)
-        
-        context = {
-            'location': location,
-            'climate_data': climate_data[:100],  # عرض آخر 100 يوم فقط للأداء
-            'monthly_summaries': monthly_summaries[:12],
-            'stats': stats,
-            'current_month_data': current_month_data,
-            'best_month': best_month,
-            'worst_month': worst_month,
-            'chart_data': json.dumps(chart_data),
-            'solar_analysis': solar_analysis,
-            'recommendations': recommendations,
-            'page_title': f'تفاصيل {location.name}',
-            'current_year': current_year,
-            'current_month': current_month,
-            'total_days': climate_data.count(),
-        }
-        
-        return render(request, 'city_detail.html', context)
-        
-    except Location.DoesNotExist:
-        return render(request, 'city_detail.html', {
-            'error': f'الموقع غير موجود',
-            'page_title': 'خطأ'
-        })
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def locations_view(request):
+    gov_filter = request.GET.get('gov', '')
+    cat_filter = request.GET.get('cat', '')
+    search     = request.GET.get('q', '')
 
+    qs = Location.objects.select_related('governorate').annotate(
+        climate_count=Count('climate_data')
+    )
+    if gov_filter:
+        qs = qs.filter(governorate__name=gov_filter)
+    if cat_filter:
+        qs = qs.filter(solar_potential_category=cat_filter)
+    if search:
+        qs = qs.filter(Q(name__icontains=search) | Q(governorate__name__icontains=search))
+    qs = qs.order_by('-solar_potential_score')
 
-def api_docs_view(request):
-    """وثائق API"""
-    return render(request, 'api_docs.html', {
-        'page_title': 'وثائق API - شماسي سمارت'
-    })
+    govs = Governorate.objects.order_by('name')
+    cats = sorted(set(Location.objects.values_list('solar_potential_category', flat=True)))
 
-
-def all_locations_view(request):
-    """عرض جميع المواقع"""
-    locations = Location.objects.select_related('governorate').all().order_by('name')
-    
-    # تقسيم حسب المحافظة
-    locations_by_gov = {}
-    for location in locations:
-        gov_name = location.governorate.name if location.governorate else "غير محدد"
-        if gov_name not in locations_by_gov:
-            locations_by_gov[gov_name] = []
-        locations_by_gov[gov_name].append(location)
-    
     context = {
-        'locations_by_gov': locations_by_gov,
-        'total_locations': len(locations),
-        'page_title': 'جميع المواقع'
+        'page': 'locations',
+        'locations': qs,
+        'govs': govs,
+        'cats': cats,
+        'gov_filter': gov_filter,
+        'cat_filter': cat_filter,
+        'search': search,
+        'total': qs.count(),
     }
-    
-    return render(request, 'all_locations.html', context)
+    return render(request, 'dashboard/locations.html', context)
 
 
-# ==========================================
-# API Helper Views
-# ==========================================
+# ── Location Detail ───────────────────────────
 
-def get_climate_chart_data(request, location_id):
-    """API لإرجاع بيانات الرسم البياني"""
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def location_detail(request, location_id):
     try:
-        location = Location.objects.filter(location_id=location_id).first()
-        if not location:
-             location = Location.objects.filter(id=location_id).first()
-             
-        if not location:
-            return JsonResponse({'error': 'Location not found'}, status=404)
-        
-        # بيانات آخر 30 يوم
-        last_month = datetime.now() - timedelta(days=30)
-        data = DailyClimateData.objects.filter(
-            location=location,
-            date__gte=last_month
-        ).order_by('date')
-        
-        chart_data = {
-            'dates': [str(d.date) for d in data],
-            'radiation': [float(d.allsky_sfc_sw_dwn or 0) for d in data],
-            'temperature': [float(d.t2m or 0) for d in data],
-            'humidity': [float(d.rh2m or 0) for d in data],
-            'wind': [float(d.ws2m or 0) for d in data],
-        }
-        
-        return JsonResponse(chart_data)
-    except Exception as e:
-        return JsonResponse({'error': str(e)}, status=500)
+        loc = Location.objects.select_related('governorate').get(location_id=location_id)
+    except Location.DoesNotExist:
+        return render(request, 'dashboard/home.html', {'error': 'Location not found'}, status=404)
 
+    stats = DailyClimateData.objects.filter(location=loc).aggregate(
+        avg_rad=Avg('allsky_sfc_sw_dwn'),
+        max_rad=Max('allsky_sfc_sw_dwn'),
+        min_rad=Min('allsky_sfc_sw_dwn'),
+        avg_tmp=Avg('t2m'),
+        max_tmp=Max('t2m_max'),
+        min_tmp=Min('t2m_min'),
+        avg_hum=Avg('rh2m'),
+        avg_wnd=Avg('ws2m'),
+        total_rain=Sum('prectotcorr'),
+        days=Count('id'),
+    )
+    for k, v in stats.items():
+        if v is not None:
+            stats[k] = round(v, 2)
 
-# ==========================================
-# Helper Functions (Logic)
-# ==========================================
+    monthly_agg = (
+        DailyClimateData.objects.filter(location=loc)
+        .values('date__year', 'date__month')
+        .annotate(avg_rad=Avg('allsky_sfc_sw_dwn'), avg_tmp=Avg('t2m'))
+        .order_by('date__year', 'date__month')
+    )
 
-def analyze_solar_potential(location):
-    """تحليل الإمكانية الشمسية للموقع"""
-    score = location.solar_potential_score or 0
-    
-    analysis = {
-        'potential_score': score,
-        'rating': 'غير محدد',
-        'description': 'لا توجد بيانات كافية للتقييم',
-        'advantages': [],
-        'challenges': [],
-        'optimal_seasons': ['الربيع', 'الصيف'],
+    last_90 = list(reversed(list(
+        DailyClimateData.objects.filter(location=loc).order_by('-date')[:90]
+    )))
+    daily_chart = {
+        'dates':       [str(d.date) for d in last_90],
+        'radiation':   [round(float(d.allsky_sfc_sw_dwn or 0), 3) for d in last_90],
+        'temperature': [round(float(d.t2m or 0), 1) for d in last_90],
+        'humidity':    [round(float(d.rh2m or 0), 1) for d in last_90],
+        'wind':        [round(float(d.ws2m or 0), 2) for d in last_90],
+        'cloud':       [round(float(d.cloud_amt or 0), 1) for d in last_90],
     }
-    
-    # تقييم الإمكانية
+    monthly_chart = {
+        'labels':    ["%s-%02d" % (r['date__year'], r['date__month']) for r in monthly_agg],
+        'radiation': [round(r['avg_rad'], 3) for r in monthly_agg],
+        'temp':      [round(r['avg_tmp'], 1) for r in monthly_agg],
+    }
+
+    score = loc.solar_potential_score or 0
     if score >= 80:
-        analysis['rating'] = 'ممتازة'
-        analysis['description'] = 'موقع مثالي للاستثمار في الطاقة الشمسية'
+        rating, rating_color = 'Excellent', 'success'
     elif score >= 60:
-        analysis['rating'] = 'جيدة جداً'
-        analysis['description'] = 'موقع ذو جدوى اقتصادية عالية'
+        rating, rating_color = 'Very Good', 'info'
     elif score >= 40:
-        analysis['rating'] = 'جيدة'
-        analysis['description'] = 'موقع مناسب مع بعض الاعتبارات'
-    elif score > 0:
-        analysis['rating'] = 'متوسطة'
-        analysis['description'] = 'يمكن الاستفادة من الطاقة الشمسية بشكل محدود'
-    
-    # مزايا
-    if location.avg_solar_radiation and location.avg_solar_radiation > 5.5:
-        analysis['advantages'].append('إشعاع شمسي يومي مرتفع جداً')
-    
-    # تحديات (مثال بسيط)
-    if location.governorate and location.governorate.name in ['أسوان', 'الوادى الجديد']:
-         analysis['challenges'].append('درجات حرارة عالية قد تقلل كفاءة الألواح ظهراً')
-    
-    return analysis
-
-
-def generate_solar_recommendations(location, stats):
-    """توليد توصيات بناءً على الإحصائيات"""
-    recommendations = []
-    
-    if not stats or not stats.get('avg_radiation'):
-        return recommendations
-    
-    avg_rad = stats['avg_radiation']
-    
-    # 1. حجم النظام المقترح
-    if avg_rad >= 6.0:
-        recommendations.append({
-            'type': 'high',
-            'title': 'نظام إنتاج عالي',
-            'description': 'المنطقة تدعم محطات توليد مركزية أو أنظمة منزلية عالية الكفاءة.',
-            'details': 'متوسط الإنتاج المتوقع يتجاوز 5.5 ساعة شمسية ذروة يومياً.'
-        })
-    elif avg_rad >= 4.5:
-        recommendations.append({
-            'type': 'medium',
-            'title': 'نظام منزلي قياسي',
-            'description': 'مناسب جداً للأنظمة المنزلية المتصلة بالشبكة (On-Grid).',
-            'details': 'فترة استرداد رأس المال تقدر بـ 4-6 سنوات.'
-        })
+        rating, rating_color = 'Good', 'warning'
     else:
-        recommendations.append({
-            'type': 'basic',
-            'title': 'نظام هجين/احتياطي',
-            'description': 'يفضل استخدام أنظمة مع بطاريات لضمان الاستقرار.',
-            'details': 'الإشعاع قد يكون متذبذباً في الشتاء.'
-        })
+        rating, rating_color = 'Moderate', 'secondary'
 
-    # 2. نوع الألواح
-    if stats.get('max_temp') and stats['max_temp'] > 40:
-        recommendations.append({
-            'type': 'tech',
-            'title': 'مقاومة الحرارة',
-            'description': 'ينصح باستخدام ألواح ذات معامل حراري منخفض (Low Temperature Coefficient).',
-            'details': 'ألواح HJT أو N-type تعمل بشكل أفضل هنا.'
-        })
-    
-    return recommendations
+    context = {
+        'page': 'locations',
+        'loc': loc,
+        'stats': stats,
+        'daily_chart': json.dumps(daily_chart),
+        'monthly_chart': json.dumps(monthly_chart),
+        'rating': rating,
+        'rating_color': rating_color,
+    }
+    return render(request, 'dashboard/location_detail.html', context)
+
+
+# ── Governorates ──────────────────────────────
+
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def governorates_view(request):
+    govs = (
+        Governorate.objects
+        .annotate(
+            loc_count=Count('locations'),
+            avg_rad=Avg('locations__climate_data__allsky_sfc_sw_dwn'),
+            avg_tmp=Avg('locations__climate_data__t2m'),
+        )
+        .order_by('-avg_rad')
+    )
+    map_data = [
+        {
+            'name': g.name,
+            'avg_rad': round(g.avg_rad or 0, 3),
+            'avg_tmp': round(g.avg_tmp or 0, 1),
+            'loc_count': g.loc_count,
+        }
+        for g in govs
+    ]
+    context = {
+        'page': 'governorates',
+        'govs': govs,
+        'map_data': json.dumps(map_data),
+    }
+    return render(request, 'dashboard/governorates.html', context)
+
+
+# ── Climate ───────────────────────────────────
+
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def climate_view(request):
+    year_filter  = request.GET.get('year', '')
+    month_filter = request.GET.get('month', '')
+    loc_filter   = request.GET.get('loc', '')
+
+    qs = DailyClimateData.objects.select_related('location', 'location__governorate')
+    if year_filter:
+        qs = qs.filter(date__year=year_filter)
+    if month_filter:
+        qs = qs.filter(date__month=month_filter)
+    if loc_filter:
+        qs = qs.filter(location__location_id=loc_filter)
+
+    agg = qs.aggregate(
+        avg_rad=Avg('allsky_sfc_sw_dwn'),
+        max_rad=Max('allsky_sfc_sw_dwn'),
+        avg_tmp=Avg('t2m'),
+        total_rain=Sum('prectotcorr'),
+        count=Count('id'),
+    )
+    for k, v in agg.items():
+        if v is not None:
+            agg[k] = round(v, 2)
+
+    recent = qs.order_by('-date')[:200]
+    locations_list = Location.objects.order_by('name').values('location_id', 'name')
+
+    context = {
+        'page': 'climate',
+        'recent': recent,
+        'agg': agg,
+        'locations_list': locations_list,
+        'years': list(range(2018, 2027)),
+        'months': list(range(1, 13)),
+        'year_filter': year_filter,
+        'month_filter': month_filter,
+        'loc_filter': loc_filter,
+    }
+    return render(request, 'dashboard/climate.html', context)
+
+
+# ── Equipment ─────────────────────────────────
+
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def equipment_view(request):
+    panels       = SolarPanel.objects.all().order_by('-efficiency_pct')
+    inverters    = Inverter.objects.all().order_by('-capacity_kw')
+    install_cost = InstallationCost.objects.all()
+    tariffs      = ElectricityTariff.objects.all().order_by('usage_type', 'consumption_bracket_min')
+
+    context = {
+        'page': 'equipment',
+        'panels': panels,
+        'inverters': inverters,
+        'install_cost': install_cost,
+        'tariffs': tariffs,
+    }
+    return render(request, 'dashboard/equipment.html', context)
+
+
+# ── Projects ──────────────────────────────────
+
+@login_required(login_url='dash:login')
+@user_passes_test(is_staff, login_url='dash:login')
+def projects_view(request):
+    status_filter = request.GET.get('status', '')
+    qs = DesignProject.objects.select_related('location')
+    if status_filter:
+        qs = qs.filter(status=status_filter)
+    qs = qs.order_by('-created_at')
+
+    agg = DesignProject.objects.aggregate(
+        total=Count('project_id'),
+        total_area=Sum('available_area_m2'),
+        avg_consumption=Avg('monthly_consumption_kwh'),
+    )
+    statuses = sorted(set(DesignProject.objects.values_list('status', flat=True)))
+
+    context = {
+        'page': 'projects',
+        'projects': qs,
+        'agg': agg,
+        'statuses': statuses,
+        'status_filter': status_filter,
+    }
+    return render(request, 'dashboard/projects.html', context)
+
+
+# ── AJAX ──────────────────────────────────────
+
+@login_required(login_url='dash:login')
+@require_GET
+def ajax_gov_radiation(request):
+    data = list(
+        DailyClimateData.objects
+        .values('location__governorate__name')
+        .annotate(avg_rad=Avg('allsky_sfc_sw_dwn'), avg_tmp=Avg('t2m'))
+        .order_by('-avg_rad')
+    )
+    return JsonResponse({'data': data})
+
+
+@login_required(login_url='dash:login')
+@require_GET
+def ajax_monthly_trend(request):
+    loc_id = request.GET.get('loc')
+    qs = DailyClimateData.objects
+    if loc_id:
+        qs = qs.filter(location__location_id=loc_id)
+    data = list(
+        qs.values('date__year', 'date__month')
+        .annotate(avg_rad=Avg('allsky_sfc_sw_dwn'), avg_tmp=Avg('t2m'))
+        .order_by('date__year', 'date__month')
+    )
+    return JsonResponse({'data': data})
+
+
+@login_required(login_url='dash:login')
+@require_GET
+def ajax_top_locations(request):
+    data = list(
+        Location.objects
+        .filter(solar_potential_score__isnull=False)
+        .order_by('-solar_potential_score')[:20]
+        .values('name', 'governorate__name', 'solar_potential_score',
+                'avg_solar_radiation', 'avg_temperature', 'solar_potential_category')
+    )
+    return JsonResponse({'data': data})

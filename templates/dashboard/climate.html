@@ -1,0 +1,103 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Climate Data — Shamsi Admin{% endblock %}
+{% block topbar_title %}Climate Data Explorer{% endblock %}
+
+{% block content %}
+<!-- Filters -->
+<div class="filter-bar d-flex flex-wrap gap-2 align-items-center mb-3">
+  <form method="get" class="d-flex flex-wrap gap-2 align-items-center w-100">
+    <select name="year" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:6px;padding:.35rem .75rem;font-size:.85rem;">
+      <option value="">All Years</option>
+      {% for y in years %}<option value="{{ y }}" {% if year_filter == y|stringformat:"s" %}selected{% endif %}>{{ y }}</option>{% endfor %}
+    </select>
+    <select name="month" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:6px;padding:.35rem .75rem;font-size:.85rem;">
+      <option value="">All Months</option>
+      {% for m in months %}<option value="{{ m }}" {% if month_filter == m|stringformat:"s" %}selected{% endif %}>{{ m }}</option>{% endfor %}
+    </select>
+    <select name="loc" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:6px;padding:.35rem .75rem;font-size:.85rem;">
+      <option value="">All Locations</option>
+      {% for l in locations_list %}<option value="{{ l.location_id }}" {% if loc_filter == l.location_id|stringformat:"s" %}selected{% endif %}>{{ l.name }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn-accent"><i class="bi bi-filter"></i> Apply</button>
+    <a href="{% url 'dash:climate' %}" style="color:#94a3b8;font-size:.85rem;text-decoration:none;">Clear</a>
+  </form>
+</div>
+
+<!-- Aggregate KPIs -->
+<div class="row g-3 mb-4">
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(245,158,11,.15);color:#f59e0b;"><i class="bi bi-brightness-high"></i></div>
+      <div>
+        <div class="kpi-value" style="font-size:1.3rem;">{{ agg.avg_rad|default:"—" }}</div>
+        <div class="kpi-label">Avg Radiation kWh/m²</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(245,158,11,.2);color:#f59e0b;"><i class="bi bi-trophy"></i></div>
+      <div>
+        <div class="kpi-value" style="font-size:1.3rem;">{{ agg.max_rad|default:"—" }}</div>
+        <div class="kpi-label">Peak Radiation</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(239,68,68,.15);color:#ef4444;"><i class="bi bi-thermometer-sun"></i></div>
+      <div>
+        <div class="kpi-value" style="font-size:1.3rem;">{{ agg.avg_tmp|default:"—" }}°</div>
+        <div class="kpi-label">Avg Temperature °C</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-6 col-md-3">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(59,130,246,.15);color:#3b82f6;"><i class="bi bi-cloud-rain"></i></div>
+      <div>
+        <div class="kpi-value" style="font-size:1.3rem;">{{ agg.total_rain|default:"—" }}</div>
+        <div class="kpi-label">Total Rain mm</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Table -->
+<div class="card-dark">
+  <div class="d-flex justify-content-between align-items-center mb-3">
+    <h6 class="fw-semibold mb-0"><i class="bi bi-table text-warning me-2"></i>Latest Records (up to 200)</h6>
+    <span style="color:#64748b;font-size:.82rem;">{{ agg.count|default:0 }} total matching</span>
+  </div>
+  <div style="overflow-x:auto;">
+    <table class="table table-dark-custom table-sm mb-0">
+      <thead>
+        <tr>
+          <th>Date</th><th>Location</th><th>Governorate</th>
+          <th>Radiation</th><th>Temp °C</th><th>Max °C</th><th>Min °C</th>
+          <th>Humidity %</th><th>Wind m/s</th><th>Cloud %</th><th>Rain mm</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for r in recent %}
+        <tr>
+          <td style="color:#94a3b8;">{{ r.date }}</td>
+          <td><a href="{% url 'dash:location_detail' r.location.location_id %}" style="color:#f59e0b;text-decoration:none;">{{ r.location.name }}</a></td>
+          <td style="color:#64748b;font-size:.8rem;">{{ r.location.governorate.name }}</td>
+          <td><strong style="color:#f59e0b;">{{ r.allsky_sfc_sw_dwn|floatformat:3 }}</strong></td>
+          <td>{{ r.t2m|floatformat:1 }}</td>
+          <td style="color:#ef4444;">{{ r.t2m_max|floatformat:1|default:"—" }}</td>
+          <td style="color:#06b6d4;">{{ r.t2m_min|floatformat:1|default:"—" }}</td>
+          <td>{{ r.rh2m|floatformat:1 }}%</td>
+          <td>{{ r.ws2m|floatformat:2 }}</td>
+          <td style="color:#64748b;">{{ r.cloud_amt|floatformat:1|default:"—" }}</td>
+          <td style="color:#3b82f6;">{{ r.prectotcorr|floatformat:2 }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="11" style="text-align:center;color:#64748b;padding:2rem;">No data for selected filters.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}

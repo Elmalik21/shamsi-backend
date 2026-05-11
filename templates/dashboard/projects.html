@@ -1,0 +1,88 @@
+{% extends "dashboard/base.html" %}
+{% block title %}Design Projects — Shamsi Admin{% endblock %}
+{% block topbar_title %}Design Projects{% endblock %}
+
+{% block content %}
+
+<!-- KPIs -->
+<div class="row g-3 mb-4">
+  <div class="col-md-4">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(168,85,247,.15);color:#a855f7;"><i class="bi bi-folder2-open"></i></div>
+      <div>
+        <div class="kpi-value">{{ agg.total|default:0 }}</div>
+        <div class="kpi-label">Total Projects</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(245,158,11,.15);color:#f59e0b;"><i class="bi bi-aspect-ratio"></i></div>
+      <div>
+        <div class="kpi-value">{{ agg.total_area|floatformat:0|default:"0" }} <small style="font-size:.9rem;color:#94a3b8;">m²</small></div>
+        <div class="kpi-label">Total Available Area</div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-4">
+    <div class="kpi-card">
+      <div class="kpi-icon" style="background:rgba(16,185,129,.15);color:#10b981;"><i class="bi bi-lightning-charge"></i></div>
+      <div>
+        <div class="kpi-value">{{ agg.avg_consumption|floatformat:0|default:"—" }} <small style="font-size:.9rem;color:#94a3b8;">kWh</small></div>
+        <div class="kpi-label">Avg Monthly Consumption</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Filter -->
+<div class="filter-bar d-flex gap-2 align-items-center mb-3">
+  <form method="get" class="d-flex gap-2 align-items-center">
+    <select name="status" style="background:#0f172a;border:1px solid #334155;color:#e2e8f0;border-radius:6px;padding:.35rem .75rem;font-size:.85rem;">
+      <option value="">All Statuses</option>
+      {% for s in statuses %}<option value="{{ s }}" {% if status_filter == s %}selected{% endif %}>{{ s }}</option>{% endfor %}
+    </select>
+    <button type="submit" class="btn-accent"><i class="bi bi-filter"></i> Filter</button>
+    <a href="{% url 'dash:projects' %}" style="color:#94a3b8;font-size:.85rem;text-decoration:none;">Clear</a>
+  </form>
+</div>
+
+<div class="card-dark">
+  <div style="overflow-x:auto;">
+    <table class="table table-dark-custom mb-0">
+      <thead>
+        <tr>
+          <th>Project ID</th><th>Client</th><th>Location</th><th>Area (m²)</th>
+          <th>Consumption</th><th>Budget (EGP)</th><th>Status</th><th>Battery</th><th>Created</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for p in projects %}
+        <tr>
+          <td style="color:#64748b;font-size:.78rem;">{{ p.project_id|stringformat:"s"|slice:":8" }}…</td>
+          <td><strong>{{ p.client_name }}</strong></td>
+          <td>
+            {% if p.location %}
+              <a href="{% url 'dash:location_detail' p.location.location_id %}" style="color:#f59e0b;text-decoration:none;">{{ p.location.name }}</a>
+            {% else %}<span style="color:#334155;">—</span>{% endif %}
+          </td>
+          <td style="color:#10b981;">{{ p.available_area_m2|floatformat:0 }} m²</td>
+          <td style="color:#94a3b8;">{{ p.monthly_consumption_kwh|floatformat:0 }} kWh/mo</td>
+          <td style="color:#f59e0b;">{{ p.budget_egp|floatformat:0 }}</td>
+          <td>
+            {% if p.status == 'COMPLETED' %}<span style="background:rgba(16,185,129,.12);color:#10b981;padding:.15rem .5rem;border-radius:4px;font-size:.78rem;">{{ p.status }}</span>
+            {% elif p.status == 'OPTIMIZING' %}<span style="background:rgba(59,130,246,.12);color:#3b82f6;padding:.15rem .5rem;border-radius:4px;font-size:.78rem;">{{ p.status }}</span>
+            {% elif p.status == 'DRAFT' %}<span style="background:rgba(148,163,184,.12);color:#94a3b8;padding:.15rem .5rem;border-radius:4px;font-size:.78rem;">{{ p.status }}</span>
+            {% else %}<span style="background:rgba(239,68,68,.12);color:#ef4444;padding:.15rem .5rem;border-radius:4px;font-size:.78rem;">{{ p.status }}</span>{% endif %}
+          </td>
+          <td>{% if p.include_battery %}<i class="bi bi-battery-charging text-success"></i>{% else %}<i class="bi bi-x text-muted"></i>{% endif %}</td>
+          <td style="color:#64748b;font-size:.8rem;">{{ p.created_at|date:"Y-m-d" }}</td>
+        </tr>
+        {% empty %}
+        <tr><td colspan="9" style="text-align:center;color:#64748b;padding:2rem;">No design projects yet.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endblock %}
