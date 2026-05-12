@@ -398,3 +398,46 @@ class SelectDesignView(APIView):
         project.status = 'COMPLETED'
         project.save()
         return Response({'status': 'selected', 'design': project.selected_design})
+
+
+# ── User Registration ─────────────────────────────────────────────────────────
+
+from django.contrib.auth.models import User
+from rest_framework.authtoken.models import Token
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError as DjangoValidationError
+
+class RegisterView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        username = request.data.get('username', '').strip()
+        email    = request.data.get('email',    '').strip()
+        password = request.data.get('password', '')
+
+        # Basic validation
+        if not username or not password:
+            return Response({'error': 'Username and password are required.'}, status=400)
+
+        if User.objects.filter(username=username).exists():
+            return Response({'username': ['A user with that username already exists.']}, status=400)
+
+        if email and User.objects.filter(email=email).exists():
+            return Response({'email': ['A user with that email already exists.']}, status=400)
+
+        # Password strength
+        try:
+            validate_password(password)
+        except DjangoValidationError as e:
+            return Response({'password': list(e.messages)}, status=400)
+
+        # Create user
+        user = User.objects.create_user(username=username, email=email, password=password)
+        token, _ = Token.objects.get_or_create(user=user)
+
+        return Response({
+            'token':    token.key,
+            'user_id':  user.pk,
+            'username': user.username,
+            'email':    user.email,
+        }, status=201)

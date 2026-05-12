@@ -25,6 +25,7 @@ urlpatterns = [
     path('', views.api_root, name='api-root'),
     path('', include(router.urls)),
     path('auth/token/', obtain_auth_token, name='api-token-auth'),
+    path('auth/register/', views.RegisterView.as_view(), name='api-register'),
     path('auth/user/', views.CurrentUserView.as_view(), name='current-user'),
     path('solar/potential/', views.SolarPotentialAnalysisView.as_view(), name='solar-potential-analysis'),
     path('solar/top-locations/', views.TopSolarLocationsView.as_view(), name='top-solar-locations'),
