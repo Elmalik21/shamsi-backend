@@ -84,7 +84,8 @@ class EgyptianDecisionSupport:
 
         return {
             'recommended_solution':  recommended,
-            'recommendation_reason': reason,
+            'recommendation_reason': reason.get('en', '') if isinstance(reason, dict) else str(reason),
+            'recommendation_reason_ar': reason.get('ar_hint', '') if isinstance(reason, dict) else '',
             'system_type':           system_type,
             'risks':                 risks,
             'maintenance_schedule':  maintenance,
