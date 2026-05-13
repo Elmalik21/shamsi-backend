@@ -6,6 +6,7 @@ from django.urls import path, include
 from django.shortcuts import render
 from django.conf import settings
 from django.conf.urls.static import static
+from django.http import HttpResponse
 
 
 def custom_404(request, exception):
@@ -16,6 +17,7 @@ def custom_500(request):
 
 
 urlpatterns = [
+    path('favicon.ico', lambda req: HttpResponse(status=204)),
     path('admin/',      admin.site.urls),
     path('',            include(('dashboard.urls', 'dash'), namespace='dash')),
     path('api/v1/',     include('api.urls')),
