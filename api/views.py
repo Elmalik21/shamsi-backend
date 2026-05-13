@@ -285,15 +285,63 @@ class InstallationCostListView(generics.ListAPIView):
 class OptimizeView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
-        from ai_engine.optimizer import EgyptianSolarOptimizer
-        required = ['location_id', 'available_area_m2', 'monthly_consumption_kwh',
-                    'usage_type', 'budget_egp']
+        from ai_engine.optimizer       import EgyptianSolarOptimizer
+        from ai_engine.decision_support import EgyptianDecisionSupport
+
+        # Required fields (usage_type is optional — default RESIDENTIAL)
+        required = ['location_id', 'available_area_m2', 'monthly_consumption_kwh', 'budget_egp']
         for field in required:
             if field not in request.data:
                 return Response({'error': f'{field} is required'}, status=400)
+
+        # Inject usage_type default so optimizer always has it
+        data = dict(request.data)
+        data.setdefault('usage_type', 'RESIDENTIAL')
+
         try:
             optimizer = EgyptianSolarOptimizer()
-            result    = optimizer.run(request.data)
+            result    = optimizer.run(data)
+
+            # ── Normalise field names for frontend compatibility ──────────────
+            for sol in result.get('pareto_solutions', []):
+                # Frontend reads space_utilization (not space_utilisation_pct)
+                sol['space_utilization'] = round(
+                    sol.get('space_utilisation_pct', 0) / 100.0, 3
+                )
+                # Frontend reads performance_ratio (PR = yield / peak_theoretical)
+                sys_kw = sol.get('system_kw', 1)
+                annual_yield = sol.get('annual_yield_kwh', 0)
+                # PR estimate: actual / (irradiance_hours * installed_kw) — use 1825 h/yr Egypt avg
+                sol['performance_ratio'] = round(
+                    annual_yield / (sys_kw * 1825) if sys_kw > 0 else 0, 3
+                )
+                # Add panel_id / inverter_id hints (brand+model as slug)
+                sol['panel_id']   = f"{sol.get('panel_brand','')}-{sol.get('panel_model','')}".lower().replace(' ', '-')
+                sol['inverter_id']= f"{sol.get('inverter_brand','')}-{sol.get('inverter_model','')}".lower().replace(' ', '-')
+
+            # ── Integrate Decision Support System ────────────────────────────
+            try:
+                dss = EgyptianDecisionSupport()
+                site_context = {
+                    'location_id':       data.get('location_id'),
+                    'budget_egp':        float(data.get('budget_egp', 0)),
+                    'available_area_m2': float(data.get('available_area_m2', 0)),
+                    'usage_type':        data.get('usage_type', 'RESIDENTIAL'),
+                    'shading_loss_pct':  float(data.get('shading_loss_pct', 5)),
+                    'include_battery':   data.get('include_battery', False),
+                    'system_type':       data.get('system_type', 'ON_GRID'),
+                }
+                dust_zone = result.get('dust_zone_info', {})
+                recommendation = dss.generate_recommendation(
+                    result.get('pareto_solutions', []),
+                    site_context,
+                    dust_zone,
+                )
+                result['recommendation'] = recommendation
+            except Exception as dss_err:
+                logger.warning("DSS failed (non-fatal): %s", dss_err)
+                result['recommendation'] = None
+
             return Response(result)
         except Exception as e:
             logger.exception("Optimization error")
@@ -354,11 +402,25 @@ class DustZonesView(APIView):
 
 class ROIRangeView(APIView):
     permission_classes = [IsAuthenticated]
+
+    def _get_params(self, request):
+        """Accept params from both GET query string and POST body."""
+        if request.method == 'GET':
+            return request.query_params
+        return request.data
+
+    def get(self, request):
+        return self._calculate(request)
+
     def post(self, request):
+        return self._calculate(request)
+
+    def _calculate(self, request):
         from ai_engine.roi_calculator import EgyptianROICalculator
-        cost    = request.data.get('system_cost_egp')
-        savings = request.data.get('annual_savings_egp')
-        usage   = request.data.get('usage_type', 'RESIDENTIAL')
+        params  = self._get_params(request)
+        cost    = params.get('system_cost_egp')
+        savings = params.get('annual_savings_egp')
+        usage   = params.get('usage_type', 'RESIDENTIAL')
         if None in (cost, savings):
             return Response({'error': 'system_cost_egp and annual_savings_egp required'}, status=400)
         try:

@@ -225,6 +225,9 @@ class InverterSerializer(serializers.ModelSerializer):
             'id', 'brand', 'model', 'capacity_kw', 'inverter_type',
             'efficiency_pct', 'warranty_years', 'price_egp',
             'supplier', 'data_date', 'in_stock', 'notes',
+            # IEC 62109 electrical parameters
+            'max_dc_voltage_v', 'mppt_min_v', 'mppt_max_v',
+            'max_dc_current_a', 'mppt_channels', 'max_strings',
         ]
 
 

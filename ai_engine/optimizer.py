@@ -428,9 +428,11 @@ class EgyptianSolarOptimizer:
         selected = self._select_diverse_solutions(pareto, context, n=5)
 
         return {
-            'run_id':              run_id,
+            'run_id':               run_id,
             'convergence_time_sec': round(time.time() - start, 2),
-            'pareto_solutions':    selected,
+            'pareto_solutions':     selected,
+            'dust_zone_info':       context['dust_zone'],
+            'location_info':        context['location'],
         }
 
     # ── Solution formatting ───────────────────────────────────────────────────

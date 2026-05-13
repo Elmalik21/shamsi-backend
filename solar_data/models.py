@@ -319,6 +319,20 @@ class Inverter(models.Model):
     in_stock       = models.BooleanField(default=True)
     notes          = models.TextField(blank=True)
 
+    # ── IEC 62109 Electrical Parameters ───────────────────────────────────────
+    max_dc_voltage_v  = models.FloatField(null=True, blank=True,
+        help_text="Maximum DC input voltage (V) — IEC 62109 Vmax")
+    mppt_min_v        = models.FloatField(null=True, blank=True,
+        help_text="MPPT voltage range minimum (V)")
+    mppt_max_v        = models.FloatField(null=True, blank=True,
+        help_text="MPPT voltage range maximum (V)")
+    max_dc_current_a  = models.FloatField(null=True, blank=True,
+        help_text="Maximum DC input current per MPPT string (A)")
+    mppt_channels     = models.IntegerField(default=1,
+        help_text="Number of independent MPPT channels")
+    max_strings       = models.IntegerField(default=1,
+        help_text="Maximum number of PV strings")
+
     class Meta:
         ordering = ['capacity_kw', 'price_egp']
 
