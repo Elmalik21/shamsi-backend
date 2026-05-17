@@ -144,6 +144,113 @@ class EgyptianDustClusterer:
             logger.info("Dust clusterer saved to %s", self._model_path)
         return success
 
+    def train_from_synthetic_data(self, verbose: bool = True):
+        """
+        Generate 119 synthetic Egyptian locations, train K-Means (k=4),
+        and save to ai_engine/models/dust_clusterer.pkl.
+
+        The synthetic locations cover all four Egyptian dust zones:
+          - LOW     : Nile Delta (lat >= 31 deg)
+          - MEDIUM  : Cairo belt (29.5-31 deg)
+          - HIGH    : Upper Egypt (26-29.5 deg)
+          - EXTREME : Deep south / New Valley (< 26 deg)
+
+        Returns
+        -------
+        (success: bool, metrics: dict)
+        """
+        try:
+            from sklearn.cluster import KMeans
+            from sklearn.preprocessing import StandardScaler
+            from sklearn.metrics import silhouette_score
+        except ImportError:
+            raise ImportError("scikit-learn required: pip install scikit-learn")
+
+        try:
+            from tqdm import tqdm as _tqdm
+            _have_tqdm = True
+        except ImportError:
+            _have_tqdm = False
+
+        rng = np.random.default_rng(42)
+        n_locations = 119
+
+        # Generate latitude distribution across Egyptian climate zones
+        lats = np.concatenate([
+            rng.uniform(31.0, 31.5, 15),   # Delta / Alexandria
+            rng.uniform(29.5, 31.0, 25),   # Cairo belt
+            rng.uniform(26.0, 29.5, 40),   # Upper Egypt
+            rng.uniform(22.0, 26.0, 39),   # Deep south
+        ])
+        np.random.shuffle(lats)  # type: ignore[arg-type]
+        lats = lats[:n_locations]
+
+        # Derive realistic climate features from latitude
+        dust  = 0.15 - (lats - 22.0) * (0.12 / 9.5) + rng.uniform(-0.015, 0.015, n_locations)
+        hum   = 25.0 + (lats - 22.0) * (4.5)         + rng.uniform(-5.0,   5.0,   n_locations)
+        wind  = 3.0  + rng.uniform(-1.0, 2.5, n_locations)
+
+        dust = np.clip(dust, 0.02, 0.18)
+        hum  = np.clip(hum,  15.0, 75.0)
+        wind = np.clip(wind,  1.0, 10.0)
+
+        # Feature matrix: [avg_dust, avg_humidity, avg_wind, latitude]
+        X = np.column_stack([dust, hum, wind, lats])
+
+        if verbose:
+            print(f"\n  Training K-Means on {n_locations} synthetic Egyptian locations...")
+
+        scaler   = StandardScaler()
+        X_scaled = scaler.fit_transform(X)
+
+        metrics = {}
+        steps = ['Scaling features', 'K-Means fit (k=4)', 'Re-labelling zones', 'Saving']
+        _iter = (_tqdm(steps, desc='K-Means', unit='step')
+                 if (_have_tqdm and verbose) else steps)
+
+        km = None
+        for step in _iter:
+            if step == 'K-Means fit (k=4)':
+                km = KMeans(n_clusters=4, random_state=42, n_init=10, max_iter=300)
+                km.fit(X_scaled)
+            elif step == 'Re-labelling zones':
+                # Re-label clusters by ascending dust risk (column 0 = dust)
+                centres_orig = scaler.inverse_transform(km.cluster_centers_)
+                order = np.argsort(centres_orig[:, 0])
+                remap = {int(old): new for new, old in enumerate(order)}
+                km.labels_ = np.array([remap[int(l)] for l in km.labels_])
+                km.cluster_centers_ = km.cluster_centers_[order]
+
+                # Metrics
+                sil = float(silhouette_score(X_scaled, km.labels_))
+                metrics = {
+                    'inertia':          round(float(km.inertia_), 2),
+                    'silhouette_score': round(sil, 4),
+                    'n_locations':      n_locations,
+                    'cluster_counts': {
+                        self.DUST_ZONES[i]['name']: int(np.sum(km.labels_ == i))
+                        for i in range(4)
+                    },
+                }
+
+                if verbose:
+                    print(f"\n  K-Means Results:")
+                    print(f"    Inertia      : {metrics['inertia']:.2f}")
+                    print(f"    Silhouette   : {sil:.4f}")
+                    for zone_name, count in metrics['cluster_counts'].items():
+                        print(f"    {zone_name:<10}: {count} locations")
+
+            elif step == 'Saving':
+                import joblib
+                self.model  = km
+                self.scaler = scaler
+                os.makedirs(MODELS_DIR, exist_ok=True)
+                joblib.dump({'model': self.model, 'scaler': self.scaler}, self._model_path)
+                joblib.dump({'model': self.model, 'scaler': self.scaler}, self._model_path)
+                logger.info("Dust clusterer saved -> %s", self._model_path)
+
+        return True, metrics
+
     def _load(self):
         """Load model from disk if available."""
         if self.model is not None:

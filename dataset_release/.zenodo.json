@@ -1,0 +1,50 @@
+{
+  "title": "Egyptian Solar Energy Dataset (ESED) v1.0: Multi-Year Climate and Equipment Data for Solar System Design",
+  "upload_type": "dataset",
+  "description": "Comprehensive multi-year climate and equipment dataset for solar photovoltaic research in Egypt. Contains 341,991 daily climate records across 119 Egyptian locations (2018-2026) from NASA POWER, enriched with K-Means dust-risk scores (4 zones: low, medium, high, extreme). Includes solar panel and inverter equipment catalogues (8 + 7 models), EEHC August 2024 residential and commercial tariff schedules, net-metering regulations, and 5-city PVWatts v5 validation results. Released alongside the Shamsi Smart multi-model AI framework (CNN-LSTM + NSGA-II + YOLOv8) described in the accompanying paper (Applied Energy, under review).",
+  "access_right": "open",
+  "license": "CC-BY-4.0",
+  "creators": [
+    {
+      "name": "[Your Last Name], [Your First Name]",
+      "affiliation": "[Your University], Faculty of Engineering",
+      "orcid": "0000-0000-0000-0000"
+    },
+    {
+      "name": "[Supervisor Last Name], [Supervisor First Name]",
+      "affiliation": "[Your University], Faculty of Engineering",
+      "orcid": "0000-0000-0000-0000"
+    }
+  ],
+  "keywords": [
+    "solar energy",
+    "photovoltaic",
+    "Egypt",
+    "MENA",
+    "climate data",
+    "NASA POWER",
+    "machine learning",
+    "deep learning",
+    "dust soiling",
+    "renewable energy",
+    "GHI",
+    "irradiance",
+    "dataset",
+    "ESED"
+  ],
+  "language": "eng",
+  "version": "1.0",
+  "notes": "Climate data sourced from NASA POWER API v2 (public domain). Value-added features (dust_zone, dust_risk_score) are original contributions released under CC BY 4.0. Equipment prices are market estimates Q1 2025. EEHC tariff derived from public regulatory documents.",
+  "related_identifiers": [
+    {
+      "identifier": "https://github.com/shamsi-smart/ai-engine",
+      "relation": "isSupplementTo",
+      "scheme": "url",
+      "resource_type": "software"
+    }
+  ],
+  "communities": [
+    {"identifier": "zenodo"},
+    {"identifier": "solar-energy-research"}
+  ]
+}

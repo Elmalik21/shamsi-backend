@@ -3,6 +3,11 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework.authtoken.views import obtain_auth_token
 from . import views
+from .views.roof_analysis_view import analyze_roof_image, analyze_roof_by_coordinates
+from .views.export_view import (
+    export_pvsyst, export_helioscope, export_pdf,
+    export_excel, export_csv, export_all,
+)
 
 # Create router
 router = DefaultRouter()
@@ -55,6 +60,15 @@ urlpatterns = [
     path('ai/predict-yield/', views.PredictYieldView.as_view(), name='ai-predict-yield'),
     path('ai/dust-zones/', views.DustZonesView.as_view(), name='ai-dust-zones'),
     path('ai/roi-range/', views.ROIRangeView.as_view(), name='ai-roi-range'),
+    path('ai/analyze-roof/', analyze_roof_image, name='analyze-roof'),
+    path('ai/analyze-roof-by-coords/', analyze_roof_by_coordinates, name='analyze-roof-by-coords'),
     # 5D: Project sub-endpoints
     path('projects/<uuid:pk>/select-design/', views.SelectDesignView.as_view(), name='project-select-design'),
+    # 5E: Professional export endpoints
+    path('export/<str:project_id>/pvsyst/',     export_pvsyst,     name='export-pvsyst'),
+    path('export/<str:project_id>/helioscope/', export_helioscope, name='export-helioscope'),
+    path('export/<str:project_id>/pdf/',        export_pdf,        name='export-pdf'),
+    path('export/<str:project_id>/excel/',      export_excel,      name='export-excel'),
+    path('export/<str:project_id>/csv/',        export_csv,        name='export-csv'),
+    path('export/<str:project_id>/all/',        export_all,        name='export-all'),
 ]

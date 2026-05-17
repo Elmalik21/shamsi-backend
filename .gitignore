@@ -34,6 +34,11 @@ staticfiles/
 # ── AI Model Weights (large binary files — trained on server) ─
 ai_engine/models/*.pkl
 ai_engine/models/*.joblib
+ai_engine/models/*.pth
+ai_engine/models/*.pt
+ai_engine/models/sam_vit_h.pth
+ai_engine/models/sam_vit_l.pth
+ai_engine/models/sam_vit_b.pth
 !ai_engine/models/.gitkeep
 
 # ── IDE / OS ──────────────────────────────────────────────
@@ -54,7 +59,23 @@ htmlcov/
 .pytest_cache/
 coverage.xml
 
+# ── Environment variable variants ────────────────────────
+.env.*.local
+
 # ── Large data / checkpoint files ─────────────────────────
 checkpoints/
 output/
 reports/smart_allocation_report.json
+
+# ── Satellite imagery / training datasets (large) ─────────
+datasets/sentinel2/raw/
+datasets/egyptian_roofs/images/
+datasets/egyptian_roofs/labels/
+data/satellite/downloads/
+
+# ── YOLO training runs ─────────────────────────────────────
+runs/
+
+# ── Logs ──────────────────────────────────────────────────
+logs/
+*.log
