@@ -36,8 +36,8 @@ python-dotenv>=1.0.0
 # ── Deep Learning — CNN-LSTM inference + YOLOv8 roof detection ────────────────
 # torch is imported lazily inside class methods so Railway boots without GPU.
 # CPU-only wheels are much smaller (~200 MB vs 800 MB for CUDA).
-torch==2.0.1+cpu
-torchvision==0.15.2+cpu
+torch>=2.0.0
+torchvision>=0.15.0
 ultralytics==8.0.200
 
 # ── PDF export ────────────────────────────────────────────────────────────────
