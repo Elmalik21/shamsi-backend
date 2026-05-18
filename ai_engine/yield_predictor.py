@@ -224,14 +224,24 @@ class EgyptianYieldPredictor:
         if self.model is not None:
             return True
         if not os.path.exists(self._model_path):
+            logger.warning(
+                "Yield predictor model not found at %s — using physics fallback. "
+                "Run scripts/step1_full_pipeline.py to train.",
+                self._model_path,
+            )
             return False
-        import joblib
-        data = joblib.load(self._model_path)
-        self.model  = data['model']
-        self.scaler = data['scaler']
-        self._model_r2   = data.get('r2')
-        self._model_mape = data.get('mape')
-        return True
+        try:
+            import joblib
+            data = joblib.load(self._model_path)
+            self.model  = data['model']
+            self.scaler = data['scaler']
+            self._model_r2   = data.get('r2')
+            self._model_mape = data.get('mape')
+            logger.info("✅ Loaded yield predictor from %s", self._model_path)
+            return True
+        except Exception as exc:
+            logger.error("Failed to load yield predictor: %s", exc)
+            return False
 
     # ── Prediction ────────────────────────────────────────────────────────────
 

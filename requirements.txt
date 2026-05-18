@@ -1,6 +1,6 @@
 # ═══════════════════════════════════════════
 # Shamsi Smart Backend — requirements.txt
-# Python 3.10+ | Railway / gunicorn
+# Python 3.12 | Railway / gunicorn
 # ═══════════════════════════════════════════
 
 # ── Django Core ───────────────────────────
@@ -17,7 +17,7 @@ dj-database-url==2.1.0
 # ── Data Processing / ML ─────────────────
 numpy==1.26.4
 pandas==2.2.2
-scikit-learn==1.5.0
+scikit-learn==1.6.1
 joblib==1.4.2
 scipy==1.13.1
 
@@ -33,43 +33,35 @@ tqdm>=4.66.0
 Pillow>=10.0.0
 python-dotenv>=1.0.0
 
-# ── Deep Learning (optional — required for CNN-LSTM and YOLOv8 training) ──
-# Uncomment or install separately if training locally:
-# torch==2.0.1
-# torchvision==0.15.2
-# ultralytics==8.0.200
+# ── Deep Learning — CNN-LSTM inference + YOLOv8 roof detection ────────────────
+# torch is imported lazily inside class methods so Railway boots without GPU.
+# CPU-only wheels are much smaller (~200 MB vs 800 MB for CUDA).
+torch==2.0.1+cpu
+torchvision==0.15.2+cpu
+ultralytics==8.0.200
 
-# ── AI Training extras ────────────────────────────────────────────────────
-# These are needed for training but not for the production API server.
-# Install with:  pip install torch==2.0.1 ultralytics==8.0.200 reportlab>=4.0.0
-# torch==2.0.1
-# ultralytics==8.0.200
+# ── PDF export ────────────────────────────────────────────────────────────────
 reportlab>=4.0.0
 matplotlib>=3.8.0
 
-# ── GeoTIFF / Satellite Imagery (Phase 2 — YOLOv8 real data pipeline) ────────
-# Required for:  scripts/extract_roofs_from_geotiff.py
-#                scripts/download_sentinel2.py (validate mode)
-#                scripts/semi_auto_annotate.py
-# Windows users: install rasterio via conda or the unofficial binary wheel
-#   conda install -c conda-forge rasterio geopandas shapely pyproj
-#   pip install rasterio --extra-index-url https://wheelhouse.openquake.org/windows/
-# Linux/Mac/Railway:  pip install rasterio geopandas shapely pyproj
-rasterio>=1.3.0
-geopandas>=0.14.0
-shapely>=2.0.0
-pyproj>=3.6.0
-earthpy>=0.9.4
-opencv-python>=4.8.0
+# ── Computer Vision (roof image analysis) ────────────────────────────────────
+opencv-python-headless>=4.8.0
+
+# ── GeoTIFF / Satellite Imagery ───────────────────────────────────────────────
+# Only used by offline data-pipeline scripts/ — NOT imported at runtime.
+# Install locally when running scripts/:
+#   pip install rasterio geopandas shapely pyproj earthpy
+# rasterio>=1.3.0       # REMOVED from Railway — not needed at runtime, fails on Python 3.12 Nix
+# geopandas>=0.14.0     # REMOVED from Railway — not needed at runtime
+# shapely>=2.0.0        # REMOVED from Railway — not needed at runtime
+# pyproj>=3.6.0         # REMOVED from Railway — not needed at runtime
+# earthpy>=0.9.4        # REMOVED from Railway — not needed at runtime
 
 # ── Sentinel-2 / Copernicus download ──────────────────────────────────────────
-# Required for:  scripts/usgs_auto_download.py
-# Register free at: https://browser.dataspace.copernicus.eu/
-# Add COPERNICUS_USERNAME and COPERNICUS_PASSWORD to your .env file
+# Required for:  scripts/usgs_auto_download.py — local data collection only
+# sentinelsat>=1.3.0  # REMOVED — no Python 3.12 wheel available
 
 # ── Segment Anything Model (SAM) — auto-annotation ────────────────────────────
 # Install with:
 #   pip install git+https://github.com/facebookresearch/segment-anything.git
-# Download model checkpoint:
-#   python scripts/semi_auto_annotate.py --download-sam --sam-model-type vit_h
 # segment-anything @ git+https://github.com/facebookresearch/segment-anything.git

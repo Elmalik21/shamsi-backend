@@ -256,12 +256,22 @@ class EgyptianDustClusterer:
         if self.model is not None:
             return True
         if not os.path.exists(self._model_path):
+            logger.warning(
+                "Dust clusterer model not found at %s — using latitude-rule fallback. "
+                "Run scripts/step1_full_pipeline.py to train.",
+                self._model_path,
+            )
             return False
-        import joblib
-        data = joblib.load(self._model_path)
-        self.model = data['model']
-        self.scaler = data['scaler']
-        return True
+        try:
+            import joblib
+            data = joblib.load(self._model_path)
+            self.model = data['model']
+            self.scaler = data['scaler']
+            logger.info("✅ Loaded dust clusterer from %s", self._model_path)
+            return True
+        except Exception as exc:
+            logger.error("Failed to load dust clusterer: %s", exc)
+            return False
 
     # ── Prediction ────────────────────────────────────────────────────────────
 

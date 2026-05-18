@@ -35,8 +35,8 @@ class EgyptianSolarOptimizer:
       - Tilt angle constrained to latitude ± 5°
     """
 
-    POPULATION_SIZE = 100
-    GENERATIONS     = 50
+    POPULATION_SIZE = 30   # Reduced from 100 — prevents Railway 30s request timeout
+    GENERATIONS     = 20   # Reduced from 50  — ~10x faster, minimal quality trade-off
     CROSSOVER_PROB  = 0.7
     MUTATION_PROB   = 0.3
     TOURNAMENT_SIZE = 2
