@@ -363,3 +363,63 @@ class RegisterView(APIView):
         user = User.objects.create_user(username=username, email=email, password=password)
         token, _ = Token.objects.get_or_create(user=user)
         return Response({'token': token.key, 'user_id': user.pk, 'username': user.username, 'email': user.email}, status=201)
+
+
+# ── AI Status endpoint ────────────────────────────────────────────────────────
+
+class AIStatusView(APIView):
+    """
+    GET /api/v1/ai/status/
+
+    Returns operational status of all AI models and the inference engine.
+    No auth required — safe to poll from health-check dashboards.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        import os
+        from django.conf import settings
+
+        models_dir = str(getattr(settings, 'AI_MODELS_DIR',
+                         os.path.join(os.path.dirname(__file__), '..', '..', 'ai_engine', 'models')))
+
+        def _model_info(filename, label):
+            path   = os.path.join(models_dir, filename)
+            exists = os.path.exists(path)
+            size_mb = round(os.path.getsize(path) / 1_048_576, 2) if exists else None
+            return {'loaded': exists, 'size_mb': size_mb, 'label': label}
+
+        models_status = {
+            'yield_predictor': _model_info('yield_predictor_v2.pkl', 'Random Forest Yield Predictor v2'),
+            'dust_clusterer':  _model_info('dust_clusterer.pkl',     'K-Means Dust Zone Classifier'),
+            'cnn_lstm':        _model_info('cnn_lstm_best.pth',      'CNN-LSTM Time-Series Predictor'),
+            'roof_detector':   _model_info('roof_detector_best.pt',  'YOLOv8 Roof Detector'),
+        }
+
+        torch_available   = getattr(settings, 'TORCH_AVAILABLE',   False)
+        sklearn_available = getattr(settings, 'SKLEARN_AVAILABLE',  False)
+        all_ready         = all(m['loaded'] for m in models_status.values())
+
+        if all_ready and torch_available and sklearn_available:
+            overall = 'fully_operational'
+        elif sklearn_available:
+            overall = 'fallback_mode'    # physics-based estimates active
+        else:
+            overall = 'degraded'
+
+        return Response({
+            'status':            overall,
+            'torch_available':   torch_available,
+            'sklearn_available': sklearn_available,
+            'fallback_mode':     not all_ready,
+            'models':            models_status,
+            'endpoints': {
+                'predict_yield':     'POST /api/v1/ai/predict-yield/',
+                'predict_alias':     'POST /api/v1/ai/predict/',
+                'optimize':          'POST /api/v1/ai/optimize/',
+                'dust_zones':        'GET  /api/v1/ai/dust-zones/',
+                'roi_range':         'GET|POST /api/v1/ai/roi-range/',
+                                'analyze_roof':      'POST /api/v1/ai/analyze-roof/',
+                'analyze_by_coords': 'POST /api/v1/ai/analyze-roof-by-coords/',
+            },
+        })

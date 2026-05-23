@@ -53,7 +53,11 @@ class EgyptianYieldPredictor:
         self.scaler = None
         self._model_r2 = None
         self._model_mape = None
-        self._model_path = os.path.join(MODELS_DIR, 'yield_predictor.pkl')
+        # yield_predictor_v2.pkl is the canonical file produced by yield_predictor_v2.py
+        # (also saved as yield_predictor.pkl by the v2 trainer for backward compat)
+        _v2_path = os.path.join(MODELS_DIR, 'yield_predictor_v2.pkl')
+        _v1_path = os.path.join(MODELS_DIR, 'yield_predictor.pkl')
+        self._model_path = _v2_path if os.path.exists(_v2_path) else _v1_path
 
     # ── Training data ─────────────────────────────────────────────────────────
 

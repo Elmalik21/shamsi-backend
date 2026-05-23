@@ -56,6 +56,8 @@ urlpatterns = [
     path('equipment/inverters/', views.InverterListView.as_view(), name='inverter-list'),
     path('equipment/installation-costs/', views.InstallationCostListView.as_view(), name='installation-costs'),
     # 5C: AI endpoints
+    path('ai/status/', views.AIStatusView.as_view(), name='ai-status'),            # NEW: health/status
+    path('ai/predict/', views.PredictYieldView.as_view(), name='ai-predict'),       # alias for /predict-yield/
     path('ai/optimize/', views.OptimizeView.as_view(), name='ai-optimize'),
     path('ai/predict-yield/', views.PredictYieldView.as_view(), name='ai-predict-yield'),
     path('ai/dust-zones/', views.DustZonesView.as_view(), name='ai-dust-zones'),

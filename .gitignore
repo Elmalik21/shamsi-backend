@@ -31,14 +31,18 @@ staticfiles/
 .env.local
 .env.production
 
-# ── AI Model Weights (large binary files — trained on server) ─
-ai_engine/models/*.pkl
+# ── AI Model Weights ──────────────────────────────────────────
+# Core inference models are NOW tracked in git (required for Railway deployment).
+# Only the massive SAM weights and joblib duplicates remain ignored.
+# ai_engine/models/*.pkl     ← REMOVED: yield_predictor_v2.pkl & dust_clusterer.pkl needed in prod
+# ai_engine/models/*.pth     ← REMOVED: cnn_lstm_best.pth needed in prod
+# ai_engine/models/*.pt      ← REMOVED: roof_detector_best.pt needed in prod
 ai_engine/models/*.joblib
-ai_engine/models/*.pth
-ai_engine/models/*.pt
 ai_engine/models/sam_vit_h.pth
 ai_engine/models/sam_vit_l.pth
 ai_engine/models/sam_vit_b.pth
+# training-run checkpoints (not inference weights)
+ai_engine/models/checkpoints/
 !ai_engine/models/.gitkeep
 
 # ── IDE / OS ──────────────────────────────────────────────

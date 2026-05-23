@@ -83,3 +83,23 @@ LOGIN_URL = '/login/'
 LOGIN_REDIRECT_URL = '/'
 for _p in ['media', 'staticfiles']:
     os.makedirs(BASE_DIR / _p, exist_ok=True)
+
+# --- AI / ML capability flags (Railway-safe lazy checks) ---
+# Probed at startup so views can guard against OOM or missing deps gracefully.
+AI_MODELS_DIR = BASE_DIR / 'ai_engine' / 'models'
+
+TORCH_AVAILABLE = False
+try:
+    import torch as _torch  # noqa: F401
+    TORCH_AVAILABLE = True
+    print("[production.py] torch available ✅", file=sys.stderr)
+except (ImportError, Exception) as _e:
+    print(f"[production.py] torch NOT available ({_e}) — roof/CNN analysis disabled", file=sys.stderr)
+
+SKLEARN_AVAILABLE = False
+try:
+    import sklearn as _sklearn  # noqa: F401
+    SKLEARN_AVAILABLE = True
+    print("[production.py] scikit-learn available ✅", file=sys.stderr)
+except ImportError as _e:
+    print(f"[production.py] scikit-learn NOT available ({_e}) — ML models will use physics fallback", file=sys.stderr)
