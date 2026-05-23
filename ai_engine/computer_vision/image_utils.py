@@ -173,7 +173,14 @@ class ImageProcessor:
         if source == 'osm':
             return ImageProcessor._fetch_osm_tile(latitude, longitude, zoom, size)
 
-        raise ValueError(f"Unknown source '{source}'. Use: google, mapbox, osm, synthetic.")
+        if source == 'esri':
+            return ImageProcessor._fetch_esri_tile(latitude, longitude, zoom, size)
+
+        if source == 'auto':
+            # Smart auto-selection: try best-quality free source first
+            return ImageProcessor._auto_fetch(latitude, longitude, zoom, size, api_key)
+
+        raise ValueError(f"Unknown source '{source}'. Use: google, mapbox, osm, esri, auto, synthetic.")
 
     @staticmethod
     def _fetch_google(lat, lon, zoom, size, api_key) -> np.ndarray:
@@ -228,6 +235,74 @@ class ImageProcessor:
         if CV2_AVAILABLE:
             return cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         return np.array(PILImage.open(io.BytesIO(resp.content)).convert('RGB'))
+
+    @staticmethod
+    def _auto_fetch(lat, lon, zoom, size, api_key=None) -> np.ndarray:
+        """
+        Auto-select best available satellite source.
+        Priority: Mapbox (if token set) → ESRI World Imagery (free) → synthetic.
+        """
+        import os
+        mapbox_token = api_key or os.environ.get('MAPBOX_TOKEN', '')
+        if mapbox_token:
+            try:
+                return ImageProcessor._fetch_mapbox(lat, lon, zoom, size, mapbox_token)
+            except Exception:
+                pass  # fall through to ESRI
+
+        try:
+            return ImageProcessor._fetch_esri_tile(lat, lon, zoom, size)
+        except Exception:
+            pass  # fall through to synthetic
+
+        logger.warning("All satellite sources failed — using synthetic image.")
+        return ImageProcessor._synthetic_roof_image(size)
+
+    @staticmethod
+    def _fetch_esri_tile(lat, lon, zoom, size) -> np.ndarray:
+        """
+        Fetch ESRI World Imagery satellite tile — free, no API key required.
+
+        ESRI World Imagery provides cloud-free, high-resolution imagery for most of Egypt.
+        Tile URL format: /MapServer/tile/{z}/{y}/{x}
+        At zoom 19 this gives ~0.3 m/px — ideal for roof detection.
+        """
+        try:
+            import requests
+        except ImportError:
+            raise ImportError("pip install requests")
+
+        # Convert lat/lon to Slippy Map tile coordinates
+        import math
+        lat_r = math.radians(lat)
+        n = 2 ** zoom
+        xtile = int((lon + 180.0) / 360.0 * n)
+        ytile = int((1.0 - math.asinh(math.tan(lat_r)) / math.pi) / 2.0 * n)
+
+        url = (
+            f"https://server.arcgisonline.com/ArcGIS/rest/services/"
+            f"World_Imagery/MapServer/tile/{zoom}/{ytile}/{xtile}"
+        )
+        headers = {'User-Agent': 'ShamsiSmart/2.0 (solar-energy-research; Egypt)'}
+        resp = requests.get(url, headers=headers, timeout=15)
+        resp.raise_for_status()
+
+        if PIL_AVAILABLE:
+            from PIL import Image as PILImage
+            import io
+            img = PILImage.open(io.BytesIO(resp.content)).convert('RGB')
+            img = img.resize((size, size), PILImage.LANCZOS)
+            arr = np.array(img)
+            # Convert RGB → BGR for OpenCV compatibility
+            if CV2_AVAILABLE:
+                return arr[:, :, ::-1].copy()
+            return arr
+
+        if CV2_AVAILABLE:
+            img_arr = np.frombuffer(resp.content, dtype=np.uint8)
+            return cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+
+        raise ImportError("Install opencv-python or Pillow to decode ESRI tiles.")
 
     @staticmethod
     def _fetch_osm_tile(lat, lon, zoom, size) -> np.ndarray:
@@ -465,6 +540,71 @@ class ImageProcessor:
             'tree_shadow':   (0, 128, 0),
             'vent':          (255, 165, 0),
             'shade_structure':(0, 128, 128),
+        }
+        for obs in obstacles:
+            cls   = obs.get('class', 'unknown')
+            bbox  = obs.get('bbox', [])
+            conf  = obs.get('confidence', 0.0)
+            colour = colours.get(cls, (200, 200, 200))
+            if len(bbox) == 4:
+                x1, y1, x2, y2 = [int(v) for v in bbox]
+                cv2.rectangle(out, (x1, y1), (x2, y2), colour, 2)
+                label = f"{cls} {conf:.2f}"
+                cv2.rectangle(out, (x1, y1 - 18), (x1 + len(label) * 9, y1), colour, -1)
+                cv2.putText(out, label, (x1 + 2, y1 - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+        # Summary banner
+        pct  = round(usable_area_m2 / max(roof_area_m2, 0.01) * 100, 1)
+        text = f"Roof: {roof_area_m2:.0f}m2  Usable: {usable_area_m2:.0f}m2 ({pct}%)"
+        h    = out.shape[0]
+        cv2.rectangle(out, (0, h - 35), (out.shape[1], h), (0, 0, 0), -1)
+        cv2.putText(out, text, (8, h - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.65, (0, 255, 150), 2)
+
+        return out
+
+    # ── Format helpers ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def load_image(path: str) -> np.ndarray:
+        """Load an image file → BGR numpy array (OpenCV convention)."""
+        if CV2_AVAILABLE:
+            img = cv2.imread(path)
+            if img is None:
+                raise FileNotFoundError(f"Could not load image: {path}")
+            return img
+        if PIL_AVAILABLE:
+            pil = PILImage.open(path).convert('RGB')
+            return np.array(pil)[:, :, ::-1]   # RGB→BGR
+        raise ImportError("Install opencv-python or Pillow to load images.")
+
+    @staticmethod
+    def save_image(image: np.ndarray, path: str) -> None:
+        """Save a BGR numpy array to file."""
+        os.makedirs(os.path.dirname(path) if os.path.dirname(path) else '.', exist_ok=True)
+        if CV2_AVAILABLE:
+            cv2.imwrite(path, image)
+        elif PIL_AVAILABLE:
+            PILImage.fromarray(image[:, :, ::-1]).save(path)
+        else:
+            raise ImportError("Install opencv-python or Pillow to save images.")
+
+    @staticmethod
+    def image_to_bytes(image: np.ndarray, format: str = '.jpg') -> bytes:
+        """Encode a BGR image to bytes (for HTTP responses)."""
+        if CV2_AVAILABLE:
+            _, buf = cv2.imencode(format, image)
+            return buf.tobytes()
+        raise ImportError("opencv-python required for image_to_bytes.")
+
+    @staticmethod
+    def crop_to_polygon(image: np.ndarray, polygon: np.ndarray) -> np.ndarray:
+        """Return the bounding-box crop of `image` around `polygon`."""
+        if not CV2_AVAILABLE:
+            return image
+        x, y, w, h = cv2.boundingRect(polygon.astype(np.int32))
+        return image[y:y + h, x:x + w]
         }
         for obs in obstacles:
             cls   = obs.get('class', 'unknown')

@@ -190,8 +190,24 @@ class EgyptianRoofDetector:
             roof_polygon, obstacles_raw = self._heuristic_detection(image)
 
         # ── Area calculations ─────────────────────────────────────────────────
-        roof_area_px  = self._polygon_area(roof_polygon) if len(roof_polygon) > 2 else w * h * 0.6
-        roof_area_m2  = round(ImageProcessor.pixel_area_to_meters(roof_area_px, mpp), 1)
+        roof_area_px  = self._polygon_area(roof_polygon) if len(roof_polygon) > 2 else w * h * 0.15
+        raw_area_m2   = ImageProcessor.pixel_area_to_meters(roof_area_px, mpp)
+
+        # Reality check: cap to physically plausible roof size.
+        # At zoom 19 the full 640×640 image covers ~30,000-40,000 m².
+        # A single Egyptian residential roof: 60-300 m².
+        # A large commercial roof: up to 5,000 m².
+        # If the heuristic polygon covers >40% of the image we almost certainly
+        # detected the whole image, not a single roof — clamp it.
+        if self._model is None:
+            # Heuristic mode: apply conservative cap (max 2,000 m² for heuristic)
+            total_image_m2 = w * mpp * h * mpp
+            if raw_area_m2 > total_image_m2 * 0.40:
+                # Fallback: estimate 200 m² (typical Cairo apartment block roof)
+                raw_area_m2 = min(raw_area_m2, 200.0)
+            raw_area_m2 = max(10.0, min(raw_area_m2, 2000.0))
+
+        roof_area_m2 = round(raw_area_m2, 1)
 
         # Enrich obstacles with m² areas
         obstacles = []
@@ -333,10 +349,14 @@ class EgyptianRoofDetector:
         pad  = min(h, w) // 10
 
         if not CV2_AVAILABLE:
-            # Absolute minimum — just return image border as roof
+            # No OpenCV — return a conservative centre rectangle (~20% of image)
+            # representing a plausible single-building roof footprint.
+            cx, cy   = w // 2, h // 2
+            half_w   = w // 5   # 20% of image width
+            half_h   = h // 5   # 20% of image height
             roof = np.array([
-                [pad, pad], [w - pad, pad],
-                [w - pad, h - pad], [pad, h - pad],
+                [cx - half_w, cy - half_h], [cx + half_w, cy - half_h],
+                [cx + half_w, cy + half_h], [cx - half_w, cy + half_h],
             ])
             return roof, []
 

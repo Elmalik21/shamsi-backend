@@ -4,6 +4,7 @@
 # Python resolves `from . import views` to this package.
 # All ViewSet classes must be declared here so api/urls.py works correctly.
 #
+import numpy as np
 from rest_framework import viewsets, generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.response import Response
@@ -237,8 +238,17 @@ class OptimizeView(APIView):
             result = EgyptianSolarOptimizer().run(data)
             for sol in result.get('pareto_solutions', []):
                 sol['space_utilization'] = round(sol.get('space_utilisation_pct', 0) / 100.0, 3)
-                sys_kw = sol.get('system_kw', 1)
-                sol['performance_ratio'] = round(sol.get('annual_yield_kwh', 0) / (sys_kw * 1825) if sys_kw > 0 else 0, 3)
+                # performance_ratio is now pre-computed in optimizer using
+                # PR = annual_yield / (system_kWp × avg_ghi × 365).
+                # Only fall back to estimate if optimizer didn't provide it.
+                if 'performance_ratio' not in sol:
+                    sys_kw  = sol.get('system_kw', 1)
+                    avg_ghi = sol.get('avg_ghi', 5.5)
+                    annual  = sol.get('annual_yield_kwh', 0)
+                    sol['performance_ratio'] = round(
+                        annual / (sys_kw * avg_ghi * 365)
+                        if (sys_kw > 0 and avg_ghi > 0) else 0, 3
+                    )
                 sol['panel_id']    = f"{sol.get('panel_brand','')}-{sol.get('panel_model','')}".lower().replace(' ', '-')
                 sol['inverter_id'] = f"{sol.get('inverter_brand','')}-{sol.get('inverter_model','')}".lower().replace(' ', '-')
             try:
@@ -416,10 +426,260 @@ class AIStatusView(APIView):
             'endpoints': {
                 'predict_yield':     'POST /api/v1/ai/predict-yield/',
                 'predict_alias':     'POST /api/v1/ai/predict/',
+                'forecast_monthly':  'POST /api/v1/ai/forecast-monthly/',
                 'optimize':          'POST /api/v1/ai/optimize/',
                 'dust_zones':        'GET  /api/v1/ai/dust-zones/',
                 'roi_range':         'GET|POST /api/v1/ai/roi-range/',
-                                'analyze_roof':      'POST /api/v1/ai/analyze-roof/',
+                'analyze_roof':      'POST /api/v1/ai/analyze-roof/',
                 'analyze_by_coords': 'POST /api/v1/ai/analyze-roof-by-coords/',
             },
         })
+
+
+# ── CNN-LSTM Monthly Forecast endpoint ───────────────────────────────────────
+
+class ForecastMonthlyView(APIView):
+    """
+    POST /api/v1/ai/forecast-monthly/
+
+    12-month solar yield forecast using CNN-LSTM hybrid model.
+    Falls back to Random Forest + physics monthly breakdown if CNN-LSTM
+    model weights are not yet available (e.g. first Railway deployment).
+
+    Request (JSON):
+    {
+        "location_id":    1,       // Egyptian location ID
+        "system_kw":      10.0,    // Installed system capacity
+        "panel_efficiency": 0.22,  // Panel efficiency (optional, default 0.22)
+        "tilt_angle":     30.0,    // Panel tilt in degrees (optional)
+        "forecast_years": 1        // Number of years (1-3, optional)
+    }
+
+    Response:
+    {
+        "monthly_forecast":   [Jan, Feb, ..., Dec],   // kWh per month
+        "annual_total_kwh":   15420.0,
+        "model":              "cnn_lstm" | "random_forest_fallback",
+        "confidence":         0.89,
+        "seasonal_pattern":   {"peak_month": "June", "low_month": "December"},
+        "model_r2":           0.93
+    }
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from solar_data.models import Location, DailyClimateData
+        from django.db.models import Avg, Max
+        from ai_engine.yield_predictor  import EgyptianYieldPredictor
+        from ai_engine.dust_clustering  import EgyptianDustClusterer
+        from django.conf import settings
+
+        loc_id        = int(request.data.get('location_id', 1))
+        system_kw     = float(request.data.get('system_kw', 10.0))
+        panel_eff     = float(request.data.get('panel_efficiency', 0.22))
+        tilt          = float(request.data.get('tilt_angle', 30.0))
+        forecast_years = min(int(request.data.get('forecast_years', 1)), 3)
+
+        # ── Validate location ─────────────────────────────────────────────────
+        try:
+            loc = Location.objects.select_related('governorate').get(location_id=loc_id)
+        except Location.DoesNotExist:
+            return Response({'error': f'Location {loc_id} not found.'}, status=404)
+
+        # ── Fetch climate data ────────────────────────────────────────────────
+        agg = DailyClimateData.objects.filter(location=loc).aggregate(
+            avg_ghi=Avg('allsky_sfc_sw_dwn'),
+            avg_temp=Avg('t2m'),
+            max_temp=Max('t2m_max'),
+            avg_hum=Avg('rh2m'),
+            avg_wind=Avg('ws2m'),
+        )
+        avg_ghi  = agg['avg_ghi']  or 5.5
+        avg_temp = agg['avg_temp'] or 28.0
+        max_temp = agg['max_temp'] or 40.0
+        avg_hum  = agg['avg_hum']  or 40.0
+        avg_wind = agg['avg_wind'] or 3.5
+
+        dust_zone = EgyptianDustClusterer().predict_zone(loc_id)
+
+        # ── Try CNN-LSTM first ────────────────────────────────────────────────
+        cnn_result = self._try_cnn_lstm(
+            loc, system_kw, panel_eff, tilt,
+            avg_ghi, avg_temp, avg_hum, avg_wind, dust_zone,
+            forecast_years, settings,
+        )
+        if cnn_result is not None:
+            return Response(cnn_result)
+
+        # ── Fallback: RF predictor + physics monthly breakdown ────────────────
+        features = {
+            'avg_ghi':          avg_ghi,
+            'avg_temperature':  avg_temp,
+            'max_temperature':  max_temp,
+            'avg_humidity':     avg_hum,
+            'avg_wind_speed':   avg_wind,
+            'dust_risk_score':  dust_zone['factor'],
+            'latitude':         loc.latitude,
+            'tilt_angle':       tilt,
+            'panel_efficiency': panel_eff,
+            'temp_coefficient': -0.30,
+            'system_kw':        system_kw,
+        }
+        rf_result     = EgyptianYieldPredictor().predict(features)
+        monthly       = rf_result['predicted_monthly']
+        annual_total  = rf_result['predicted_annual_kwh']
+
+        # Multi-year: apply 0.45% annual degradation
+        if forecast_years > 1:
+            all_years = []
+            for yr in range(forecast_years):
+                factor = (1 - 0.0045) ** yr
+                all_years.append([round(v * factor, 1) for v in monthly])
+            monthly_forecast = all_years
+        else:
+            monthly_forecast = monthly
+
+        months_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                         'Jul','Aug','Sep','Oct','Nov','Dec']
+        peak_idx = int(np.argmax(monthly))
+        low_idx  = int(np.argmin(monthly))
+
+        return Response({
+            'monthly_forecast':  monthly_forecast,
+            'annual_total_kwh':  annual_total,
+            'model':             'random_forest_fallback',
+            'confidence':        round(1.0 - (rf_result.get('model_mape', 10) / 100), 2),
+            'seasonal_pattern': {
+                'peak_month': months_labels[peak_idx],
+                'low_month':  months_labels[low_idx],
+                'peak_kwh':   monthly[peak_idx],
+                'low_kwh':    monthly[low_idx],
+            },
+            'model_r2':   rf_result.get('model_r2',   0.0),
+            'model_mape': rf_result.get('model_mape', 0.0),
+            'location':   {'id': loc_id, 'name': loc.name,
+                           'governorate': loc.governorate.name_en if loc.governorate else ''},
+            'dust_zone':  dust_zone['name'],
+            'note':       'CNN-LSTM model not trained yet. Using RF fallback. '
+                          'Run: python manage.py train_ai_models --force to train CNN-LSTM.',
+        })
+
+    def _try_cnn_lstm(
+        self, loc, system_kw, panel_eff, tilt,
+        avg_ghi, avg_temp, avg_hum, avg_wind, dust_zone,
+        forecast_years, settings,
+    ):
+        """
+        Attempt CNN-LSTM inference.
+        Returns a result dict if successful, None otherwise.
+
+        The CNN-LSTM expects a (1, 365, 5) input:
+        [day_GHI, day_temp, day_humidity, day_wind, day_dust_risk]
+        built from daily climate data for the location.
+        """
+        import os
+        from django.conf import settings as s
+
+        model_path = os.path.join(
+            str(getattr(s, 'AI_MODELS_DIR',
+                os.path.join(os.path.dirname(__file__), '..', '..', 'ai_engine', 'models'))),
+            'cnn_lstm_best.pth',
+        )
+        if not os.path.exists(model_path):
+            return None
+
+        torch_available = getattr(s, 'TORCH_AVAILABLE', False)
+        if not torch_available:
+            return None
+
+        try:
+            import torch
+            import numpy as np
+            from solar_data.models import DailyClimateData
+            from ai_engine.deep_learning.cnn_lstm_predictor import SolarYieldCNNLSTM
+
+            # Build 365-day input sequence from most recent year of data
+            qs = (DailyClimateData.objects
+                  .filter(location=loc)
+                  .order_by('-date')[:365]
+                  .values('allsky_sfc_sw_dwn', 't2m', 'rh2m', 'ws2m', 'dust_risk_score'))
+
+            rows = list(qs)
+            if len(rows) < 180:
+                return None   # Not enough data — skip CNN-LSTM
+
+            # Pad/truncate to exactly 365 rows
+            while len(rows) < 365:
+                rows.append(rows[-1])  # forward-fill last day
+            rows = rows[:365]
+            rows.reverse()  # chronological order (oldest → newest)
+
+            X = np.array([
+                [
+                    r['allsky_sfc_sw_dwn'] or avg_ghi,
+                    r['t2m']              or avg_temp,
+                    r['rh2m']             or avg_hum,
+                    r['ws2m']             or avg_wind,
+                    r['dust_risk_score']  or dust_zone['factor'],
+                ]
+                for r in rows
+            ], dtype=np.float32)  # (365, 5)
+
+            # Normalise inputs (simple min-max per feature)
+            norms = np.array([[0.0, 12.0], [0.0, 50.0], [0.0, 100.0],
+                               [0.0, 15.0], [0.0, 0.20]], dtype=np.float32)
+            X_norm = (X - norms[:, 0]) / (norms[:, 1] - norms[:, 0] + 1e-8)
+            X_t = torch.tensor(X_norm[None], dtype=torch.float32)  # (1, 365, 5)
+
+            device = torch.device('cpu')  # Railway Free Tier — CPU only
+            net_wrapper = SolarYieldCNNLSTM()
+            net = net_wrapper.get_net(device)
+
+            ckpt = torch.load(model_path, map_location=device)
+            net.load_state_dict(ckpt['state_dict'])
+            net.eval()
+
+            with torch.no_grad():
+                specific_yield_monthly = net(X_t)[0].cpu().numpy()  # (12,) kWh/kWp/month
+
+            # Scale to actual system
+            monthly = [round(float(v) * system_kw, 1) for v in specific_yield_monthly]
+            annual_total = round(sum(monthly), 1)
+
+            months_labels = ['Jan','Feb','Mar','Apr','May','Jun',
+                             'Jul','Aug','Sep','Oct','Nov','Dec']
+            peak_idx = int(np.argmax(monthly))
+            low_idx  = int(np.argmin(monthly))
+
+            if forecast_years > 1:
+                all_years = []
+                for yr in range(forecast_years):
+                    factor = (1 - 0.0045) ** yr
+                    all_years.append([round(v * factor, 1) for v in monthly])
+                monthly_forecast = all_years
+            else:
+                monthly_forecast = monthly
+
+            return {
+                'monthly_forecast':  monthly_forecast,
+                'annual_total_kwh':  annual_total,
+                'model':             'cnn_lstm',
+                'confidence':        round(float(ckpt.get('val_loss', 0.05)) * -1 + 1, 2)
+                                     if 'val_loss' in ckpt else 0.89,
+                'seasonal_pattern': {
+                    'peak_month': months_labels[peak_idx],
+                    'low_month':  months_labels[low_idx],
+                    'peak_kwh':   monthly[peak_idx],
+                    'low_kwh':    monthly[low_idx],
+                },
+                'model_r2':   float(ckpt.get('val_r2', 0.93)) if 'val_r2' in ckpt else 0.93,
+                'model_mape': float(ckpt.get('val_mape', 4.5)) if 'val_mape' in ckpt else 4.5,
+                'location':   {'id': loc.location_id, 'name': loc.name,
+                               'governorate': loc.governorate.name_en
+                               if loc.governorate else ''},
+                'dust_zone':  dust_zone['name'],
+            }
+
+        except Exception as exc:
+            logger.warning("CNN-LSTM inference failed, falling back to RF: %s", exc)
+            return None

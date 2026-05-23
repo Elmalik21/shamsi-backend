@@ -78,12 +78,14 @@ class EgyptianSolarOptimizer:
         result     = self.yield_predictor.predict(features)
         base_yield = result['predicted_annual_kwh']
 
-        dust_loss    = dust['factor']
-        temp_avg     = climate['avg_temperature']
-        temp_loss    = max(0.0, (temp_avg - 25) * abs(panel.temp_coefficient_pct) * 0.01)
+        # ⚠️  IMPORTANT: the RF predictor was trained with dust_loss and
+        # temp_loss already baked into the physics target variable.
+        # Applying them again here would double-count the derating and
+        # produce unrealistically low yields (e.g. 4,900 instead of 14,000 kWh).
+        # Only apply shading_loss, which is a site-specific override NOT
+        # captured in the training data.
         shading_loss = site['shading_loss_pct'] / 100.0
-
-        adjusted = base_yield * (1 - dust_loss) * (1 - temp_loss) * (1 - shading_loss)
+        adjusted = base_yield * (1 - shading_loss)
         return float(adjusted)
 
     def _f2_cost(self, individual, context) -> float:
@@ -138,6 +140,23 @@ class EgyptianSolarOptimizer:
 
         energy = self._f1_energy(individual, context)
         space  = self._f3_space(individual, context)
+
+        # Soft payback constraint: penalise solutions with payback > 15 years.
+        # This guides evolution toward economically viable designs without
+        # hard-rejecting them (keeps diversity in early generations).
+        try:
+            from solar_data.utils import calculate_annual_savings
+            monthly_kwh = float(context['request'].get('monthly_consumption_kwh', 500))
+            usage_type  = context['request'].get('usage_type', 'RESIDENTIAL')
+            savings     = calculate_annual_savings(energy, usage_type, monthly_kwh)
+            annual_save = savings['annual_savings_egp']
+            payback     = (cost / annual_save) if annual_save > 0 else 99.0
+            if payback > 15.0:
+                # Penalise: reduce apparent energy so NSGA-II favours other solutions
+                energy = energy * (15.0 / max(payback, 15.01))
+        except Exception:
+            pass  # non-fatal — continue with unpenalised objectives
+
         return (energy, cost, space)
 
     # ── Context builder ───────────────────────────────────────────────────────
@@ -453,12 +472,38 @@ class EgyptianSolarOptimizer:
         # Sort by energy descending
         valid.sort(key=lambda ind: ind.fitness[0], reverse=True)
 
-        # Pick up to n evenly spaced
-        if len(valid) <= n:
-            chosen = valid
-        else:
-            step    = len(valid) / n
-            chosen  = [valid[int(i * step)] for i in range(n)]
+        # ── Brand-diverse selection ───────────────────────────────────────────
+        # Pick solutions with diverse panel brands so the user sees real choice.
+        # Strategy:
+        #   1. Always include the top-energy solution.
+        #   2. For remaining slots, prefer solutions with panel brands not yet chosen.
+        #   3. If not enough diverse brands, fill remaining slots evenly-spaced.
+        chosen: list = []
+        seen_panel_brands: set = set()
+
+        # Slot 1: best by energy
+        chosen.append(valid[0])
+        seen_panel_brands.add(context['panels'][valid[0][0]].brand)
+
+        # Slots 2-n: prefer unseen brands
+        for ind in valid[1:]:
+            if len(chosen) >= n:
+                break
+            brand = context['panels'][ind[0]].brand
+            if brand not in seen_panel_brands:
+                chosen.append(ind)
+                seen_panel_brands.add(brand)
+
+        # Fill remaining slots if needed (same-brand fallback, evenly spaced)
+        if len(chosen) < n:
+            remaining_valid = [ind for ind in valid if ind not in chosen]
+            still_need      = n - len(chosen)
+            if remaining_valid:
+                step   = max(1, len(remaining_valid) // still_need)
+                extras = [remaining_valid[i * step]
+                          for i in range(still_need)
+                          if i * step < len(remaining_valid)]
+                chosen.extend(extras)
 
         solutions = []
         monthly_kwh = float(context['request'].get('monthly_consumption_kwh', 500))
@@ -504,6 +549,13 @@ class EgyptianSolarOptimizer:
                 'system_kw':         sys_kw,
             })
 
+            # Performance ratio: PR = annual_yield / (system_kWp × GHI_annual)
+            # where GHI_annual = avg_ghi (kWh/m²/day) × 365
+            # This replaces the old incorrect constant of 1825.
+            avg_ghi      = context['climate']['avg_ghi']
+            ghi_annual   = avg_ghi * 365          # kWh/m²/yr = "peak sun hours"
+            perf_ratio   = round(energy / (sys_kw * ghi_annual), 3) if (sys_kw > 0 and ghi_annual > 0) else 0.0
+
             solutions.append({
                 'rank':                   rank,
                 'panel_count':            count,
@@ -527,6 +579,8 @@ class EgyptianSolarOptimizer:
                 'monthly_production':     pred['predicted_monthly'],
                 'dust_zone':              context['dust_zone']['name'],
                 'cleaning_interval_days': context['dust_zone']['cleaning_days'],
+                'performance_ratio':      perf_ratio,   # pre-computed, accurate
+                'avg_ghi':               round(avg_ghi, 2),
             })
 
         return solutions

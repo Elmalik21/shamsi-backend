@@ -56,10 +56,11 @@ urlpatterns = [
     path('equipment/inverters/', views.InverterListView.as_view(), name='inverter-list'),
     path('equipment/installation-costs/', views.InstallationCostListView.as_view(), name='installation-costs'),
     # 5C: AI endpoints
-    path('ai/status/', views.AIStatusView.as_view(), name='ai-status'),            # NEW: health/status
-    path('ai/predict/', views.PredictYieldView.as_view(), name='ai-predict'),       # alias for /predict-yield/
-    path('ai/optimize/', views.OptimizeView.as_view(), name='ai-optimize'),
+    path('ai/status/', views.AIStatusView.as_view(), name='ai-status'),
+    path('ai/predict/', views.PredictYieldView.as_view(), name='ai-predict'),
     path('ai/predict-yield/', views.PredictYieldView.as_view(), name='ai-predict-yield'),
+    path('ai/forecast-monthly/', views.ForecastMonthlyView.as_view(), name='ai-forecast-monthly'),
+    path('ai/optimize/', views.OptimizeView.as_view(), name='ai-optimize'),
     path('ai/dust-zones/', views.DustZonesView.as_view(), name='ai-dust-zones'),
     path('ai/roi-range/', views.ROIRangeView.as_view(), name='ai-roi-range'),
     path('ai/analyze-roof/', analyze_roof_image, name='analyze-roof'),

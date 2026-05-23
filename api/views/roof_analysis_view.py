@@ -374,7 +374,9 @@ def analyze_roof_by_coordinates(request: Request) -> Response:
     latitude   = float(request.data.get('latitude',   30.0))
     longitude  = float(request.data.get('longitude',  31.0))
     zoom       = int(request.data.get('zoom_level',   19))
-    source     = request.data.get('source', 'synthetic')
+    # Default: 'esri' (ESRI World Imagery — free, no API key, real satellite).
+    # Falls back to synthetic automatically if the network request fails.
+    source     = request.data.get('source', 'esri')
     panel_w    = int(request.data.get('panel_power_w', 580))
 
     t_start     = time.time()

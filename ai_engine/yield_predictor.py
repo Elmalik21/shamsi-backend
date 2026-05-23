@@ -1,8 +1,10 @@
 """
 ai_engine/yield_predictor.py
 Random Forest Regressor trained on NASA POWER data.
-Predicts annual energy yield (kWh/kW installed) for any Egyptian location.
-Model 1 — Yield Predictor
+Predicts specific yield (kWh/kWp) for any Egyptian location,
+then scales to actual system size — eliminates system_kw leakage.
+
+Model 1 — Yield Predictor (v2 — anti-overfitting)
 """
 from __future__ import annotations
 import os
@@ -18,7 +20,11 @@ class EgyptianYieldPredictor:
     """
     Random Forest trained on 8-year NASA POWER aggregated data.
 
-    Target MAPE: < 10%   |   Target R²: > 0.85
+    TARGET: specific_yield (kWh/kWp/yr) — system-size-independent
+    At prediction time: predicted_annual_kwh = specific_yield × system_kw
+
+    This removes the system_kw leakage that caused Train R²=1.0.
+    Target R²: > 0.85   |   Target MAPE: < 10%
 
     Features (must be passed as a dict with these exact keys):
         avg_ghi           – Annual average GHI kWh/m²/day
@@ -31,18 +37,18 @@ class EgyptianYieldPredictor:
         tilt_angle        – Panel tilt degrees
         panel_efficiency  – Panel efficiency as decimal (e.g. 0.231)
         temp_coefficient  – Panel temp coefficient %/°C (negative)
-        system_kw         – System size kW
+
+    Note: system_kw is NO LONGER a feature — it is a post-prediction multiplier.
     """
 
     FEATURES = [
         'avg_ghi', 'avg_temperature', 'max_temperature',
         'avg_humidity', 'avg_wind_speed', 'dust_risk_score',
         'latitude', 'tilt_angle', 'panel_efficiency',
-        'temp_coefficient', 'system_kw',
+        'temp_coefficient',
     ]
 
     # Monthly solar fraction for Egypt (north→south varies slightly)
-    # Relative weights of each month's irradiance (sum = 1.0)
     _MONTHLY_WEIGHTS = [
         0.062, 0.068, 0.088, 0.095, 0.102, 0.105,
         0.107, 0.103, 0.090, 0.079, 0.063, 0.058,
@@ -53,8 +59,6 @@ class EgyptianYieldPredictor:
         self.scaler = None
         self._model_r2 = None
         self._model_mape = None
-        # yield_predictor_v2.pkl is the canonical file produced by yield_predictor_v2.py
-        # (also saved as yield_predictor.pkl by the v2 trainer for backward compat)
         _v2_path = os.path.join(MODELS_DIR, 'yield_predictor_v2.pkl')
         _v1_path = os.path.join(MODELS_DIR, 'yield_predictor.pkl')
         self._model_path = _v2_path if os.path.exists(_v2_path) else _v1_path
@@ -65,7 +69,7 @@ class EgyptianYieldPredictor:
         """
         Build training dataset from DailyClimateData.
         Aggregates daily → annual per location.
-        Target = physics-based annual yield per kW installed.
+        Target = specific_yield (kWh/kWp/yr) — NOT affected by system size.
         """
         from solar_data.models import Location, DailyClimateData
         from django.db.models import Avg, Max
@@ -99,25 +103,23 @@ class EgyptianYieldPredictor:
             avg_wind  = agg['avg_wind'] or 3.0
             dust_risk = agg['avg_dust'] or clusterer._latitude_dust_default(loc.latitude)
 
-            # Vary panel & system parameters for richer training set
-            for eff in [0.21, 0.22, 0.23]:
+            # Vary panel parameters — but NOT system_kw (it's not a feature anymore)
+            for eff in [0.20, 0.21, 0.22, 0.23, 0.24]:
                 for tilt in [loc.latitude - 5, loc.latitude, loc.latitude + 5]:
-                    for sys_kw in [5.0, 10.0, 15.0]:
-                        temp_coeff = -0.32
+                    temp_coeff = -0.32
 
-                        # Physics target: annual kWh per kW installed
-                        temp_loss  = max(0.0, (avg_temp - 25) * abs(temp_coeff) * 0.01)
-                        dust_loss  = dust_risk
-                        yield_kwh  = (avg_ghi * 365 * eff
+                    # Physics target: specific_yield = kWh/kWp/yr (size-independent)
+                    temp_loss     = max(0.0, (avg_temp - 25) * abs(temp_coeff) * 0.01)
+                    dust_loss     = dust_risk
+                    specific_yield = (avg_ghi * 365 * eff
                                       * (1 - temp_loss)
-                                      * (1 - dust_loss)
-                                      * sys_kw)
+                                      * (1 - dust_loss))
 
-                        X_rows.append([
-                            avg_ghi, avg_temp, max_temp, avg_hum, avg_wind,
-                            dust_risk, loc.latitude, tilt, eff, temp_coeff, sys_kw,
-                        ])
-                        y_rows.append(yield_kwh)
+                    X_rows.append([
+                        avg_ghi, avg_temp, max_temp, avg_hum, avg_wind,
+                        dust_risk, loc.latitude, tilt, eff, temp_coeff,
+                    ])
+                    y_rows.append(specific_yield)
 
         if not X_rows:
             return None, None
@@ -129,7 +131,7 @@ class EgyptianYieldPredictor:
     def train(self):
         """
         Train Random Forest with 5-fold CV.
-        Prints MAE, MAPE, R² for train and test sets.
+        Target is specific_yield (kWh/kWp/yr) — removes system_kw leakage.
         """
         try:
             from sklearn.ensemble import RandomForestRegressor
@@ -151,10 +153,13 @@ class EgyptianYieldPredictor:
             X_scaled, y, test_size=0.2, random_state=42
         )
 
+        # Regularized RF: min_samples_leaf + max_features prevent overfitting
         rf = RandomForestRegressor(
             n_estimators=200,
             max_depth=15,
             min_samples_split=5,
+            min_samples_leaf=5,      # prevents memorisation of single rows
+            max_features='sqrt',     # reduces correlation between trees
             random_state=42,
             n_jobs=-1,
         )
@@ -172,8 +177,8 @@ class EgyptianYieldPredictor:
         # 5-fold CV R²
         cv_r2 = cross_val_score(rf, X_scaled, y, cv=5, scoring='r2')
 
-        print(f"  Train  — MAE: {mae_tr:.1f} kWh   R²: {r2_tr:.4f}")
-        print(f"  Test   — MAE: {mae_te:.1f} kWh   MAPE: {mape_te:.2f}%   R²: {r2_te:.4f}")
+        print(f"  Train  — MAE: {mae_tr:.1f} kWh/kWp   R²: {r2_tr:.4f}")
+        print(f"  Test   — MAE: {mae_te:.1f} kWh/kWp   MAPE: {mape_te:.2f}%   R²: {r2_te:.4f}")
         print(f"  5-fold CV R²: {cv_r2.mean():.4f} ± {cv_r2.std():.4f}")
 
         self.model  = rf
@@ -189,25 +194,25 @@ class EgyptianYieldPredictor:
         }
 
     def _synthetic_data(self):
-        """Generate synthetic Egyptian data for fallback training."""
+        """Generate synthetic Egyptian data for fallback training (specific_yield target)."""
         rng = np.random.default_rng(42)
-        n = 500
-        ghi  = rng.uniform(4.5, 7.5, n)
-        temp = rng.uniform(18.0, 35.0, n)
-        lat  = rng.uniform(22.0, 31.5, n)
-        eff  = rng.uniform(0.20, 0.24, n)
-        dust = rng.uniform(0.03, 0.15, n)
-        tilt = lat + rng.uniform(-5, 5, n)
-        sys_kw = rng.uniform(3.0, 20.0, n)
+        n = 800
+        ghi        = rng.uniform(4.5, 7.5, n)
+        temp       = rng.uniform(18.0, 35.0, n)
+        lat        = rng.uniform(22.0, 31.5, n)
+        eff        = rng.uniform(0.19, 0.24, n)
+        dust       = rng.uniform(0.03, 0.15, n)
+        tilt       = lat + rng.uniform(-5, 5, n)
         temp_coeff = rng.uniform(-0.35, -0.28, n)
-        hum  = rng.uniform(25.0, 70.0, n)
-        wind = rng.uniform(2.0, 6.0, n)
-        max_t = temp + rng.uniform(5, 12, n)
+        hum        = rng.uniform(25.0, 70.0, n)
+        wind       = rng.uniform(2.0, 6.0, n)
+        max_t      = temp + rng.uniform(5, 12, n)
 
         temp_loss = np.maximum(0.0, (temp - 25) * np.abs(temp_coeff) * 0.01)
-        y = ghi * 365 * eff * (1 - temp_loss) * (1 - dust) * sys_kw
+        # Target: specific_yield — independent of system_kw
+        y = ghi * 365 * eff * (1 - temp_loss) * (1 - dust)
 
-        X = np.column_stack([ghi, temp, max_t, hum, wind, dust, lat, tilt, eff, temp_coeff, sys_kw])
+        X = np.column_stack([ghi, temp, max_t, hum, wind, dust, lat, tilt, eff, temp_coeff])
         return X, y
 
     def train_and_save(self):
@@ -216,12 +221,13 @@ class EgyptianYieldPredictor:
         os.makedirs(MODELS_DIR, exist_ok=True)
         metrics = self.train()
         joblib.dump({
-            'model': self.model,
+            'model':  self.model,
             'scaler': self.scaler,
-            'r2': self._model_r2,
-            'mape': self._model_mape,
+            'r2':     self._model_r2,
+            'mape':   self._model_mape,
+            'target': 'specific_yield',   # metadata: model predicts kWh/kWp
         }, self._model_path)
-        logger.info("Yield predictor saved to %s", self._model_path)
+        logger.info("Yield predictor (specific_yield target) saved to %s", self._model_path)
         return metrics
 
     def _load(self):
@@ -229,8 +235,7 @@ class EgyptianYieldPredictor:
             return True
         if not os.path.exists(self._model_path):
             logger.warning(
-                "Yield predictor model not found at %s — using physics fallback. "
-                "Run scripts/step1_full_pipeline.py to train.",
+                "Yield predictor model not found at %s — using physics fallback.",
                 self._model_path,
             )
             return False
@@ -241,7 +246,8 @@ class EgyptianYieldPredictor:
             self.scaler = data['scaler']
             self._model_r2   = data.get('r2')
             self._model_mape = data.get('mape')
-            logger.info("✅ Loaded yield predictor from %s", self._model_path)
+            logger.info("✅ Loaded yield predictor from %s (target=%s)",
+                        self._model_path, data.get('target', 'unknown'))
             return True
         except Exception as exc:
             logger.error("Failed to load yield predictor: %s", exc)
@@ -253,6 +259,9 @@ class EgyptianYieldPredictor:
         """
         Predict annual yield for a given feature set.
 
+        Internally predicts specific_yield (kWh/kWp),
+        then multiplies by system_kw to get actual annual kWh.
+
         Returns
         -------
         dict with keys:
@@ -262,26 +271,32 @@ class EgyptianYieldPredictor:
             model_r2              – model R²
             model_mape            – model MAPE %
         """
+        sys_kw = float(features.get('system_kw', 10.0))
+
         if not self._load():
-            # Fallback: pure physics estimate
             return self._physics_estimate(features)
 
+        # Build feature vector using only the 10 non-leaking features
         x = np.array([[features[f] for f in self.FEATURES]], dtype=float)
         x_s = self.scaler.transform(x)
 
-        # Tree-level predictions for uncertainty
+        # Tree-level predictions of specific_yield for uncertainty estimation
         tree_preds = np.array([t.predict(x_s)[0] for t in self.model.estimators_])
-        pred_mean  = float(tree_preds.mean())
-        pred_std   = float(tree_preds.std())
+        spec_mean  = float(tree_preds.mean())
+        spec_std   = float(tree_preds.std())
 
-        monthly = [round(pred_mean * w, 1) for w in self._MONTHLY_WEIGHTS]
+        # Scale to actual system size
+        annual_mean = spec_mean * sys_kw
+        annual_std  = spec_std  * sys_kw
+
+        monthly = [round(annual_mean * w, 1) for w in self._MONTHLY_WEIGHTS]
 
         return {
-            'predicted_annual_kwh':  round(pred_mean, 1),
-            'predicted_monthly':     monthly,
+            'predicted_annual_kwh': round(annual_mean, 1),
+            'predicted_monthly':    monthly,
             'confidence_interval': {
-                'low':  round(max(0, pred_mean - 1.645 * pred_std), 1),
-                'high': round(pred_mean + 1.645 * pred_std, 1),
+                'low':  round(max(0, annual_mean - 1.645 * annual_std), 1),
+                'high': round(annual_mean + 1.645 * annual_std, 1),
             },
             'model_r2':   round(self._model_r2 or 0.0, 4),
             'model_mape': round(self._model_mape or 0.0, 2),
@@ -289,16 +304,17 @@ class EgyptianYieldPredictor:
 
     def _physics_estimate(self, features: dict) -> dict:
         """Pure physics fallback when model not trained."""
-        ghi       = features.get('avg_ghi', 5.5)
-        temp      = features.get('avg_temperature', 25.0)
-        dust      = features.get('dust_risk_score', 0.07)
-        eff       = features.get('panel_efficiency', 0.22)
-        temp_c    = features.get('temp_coefficient', -0.32)
-        sys_kw    = features.get('system_kw', 10.0)
+        ghi    = features.get('avg_ghi', 5.5)
+        temp   = features.get('avg_temperature', 25.0)
+        dust   = features.get('dust_risk_score', 0.07)
+        eff    = features.get('panel_efficiency', 0.22)
+        temp_c = features.get('temp_coefficient', -0.32)
+        sys_kw = float(features.get('system_kw', 10.0))
 
-        temp_loss = max(0.0, (temp - 25) * abs(temp_c) * 0.01)
-        annual    = ghi * 365 * eff * (1 - temp_loss) * (1 - dust) * sys_kw
-        monthly   = [round(annual * w, 1) for w in self._MONTHLY_WEIGHTS]
+        temp_loss     = max(0.0, (temp - 25) * abs(temp_c) * 0.01)
+        specific_yield = ghi * 365 * eff * (1 - temp_loss) * (1 - dust)
+        annual        = specific_yield * sys_kw
+        monthly       = [round(annual * w, 1) for w in self._MONTHLY_WEIGHTS]
 
         return {
             'predicted_annual_kwh': round(annual, 1),
@@ -307,7 +323,7 @@ class EgyptianYieldPredictor:
                 'low':  round(annual * 0.90, 1),
                 'high': round(annual * 1.10, 1),
             },
-            'model_r2': 0.0,
+            'model_r2':   0.0,
             'model_mape': 0.0,
         }
 
