@@ -272,8 +272,19 @@ class OptimizeView(APIView):
 class PredictYieldView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
-        from ai_engine.yield_predictor import EgyptianYieldPredictor
-        from ai_engine.dust_clustering import EgyptianDustClusterer
+        # Use singleton from registry (loaded at startup) — avoids per-request disk I/O
+        try:
+            from ai_engine.model_registry import registry
+            yield_predictor  = registry.yield_predictor
+            dust_clusterer   = registry.dust_clusterer
+            if yield_predictor is None:
+                raise AttributeError("not loaded")
+        except Exception:
+            from ai_engine.yield_predictor import EgyptianYieldPredictor
+            from ai_engine.dust_clustering import EgyptianDustClusterer
+            yield_predictor = EgyptianYieldPredictor()
+            dust_clusterer  = EgyptianDustClusterer()
+
         from solar_data.models import Location, DailyClimateData
         from django.db.models import Avg, Max
         loc_id = request.data.get('location_id', 1)
@@ -289,8 +300,8 @@ class PredictYieldView(APIView):
             avg_ghi=Avg('allsky_sfc_sw_dwn'), avg_temp=Avg('t2m'),
             max_temp=Max('t2m_max'), avg_hum=Avg('rh2m'), avg_wind=Avg('ws2m'),
         )
-        dust_zone = EgyptianDustClusterer().predict_zone(loc_id)
-        result = EgyptianYieldPredictor().predict({
+        dust_zone = dust_clusterer.predict_zone(loc_id)
+        result = yield_predictor.predict({
             'avg_ghi': agg['avg_ghi'] or 5.5, 'avg_temperature': agg['avg_temp'] or 28.0,
             'max_temperature': agg['max_temp'] or 40.0, 'avg_humidity': agg['avg_hum'] or 40.0,
             'avg_wind_speed': agg['avg_wind'] or 3.5, 'dust_risk_score': dust_zone['factor'],
@@ -300,6 +311,20 @@ class PredictYieldView(APIView):
         shade_factor = 1 - shade / 100
         result['predicted_annual_kwh'] = round(result['predicted_annual_kwh'] * shade_factor, 1)
         result['predicted_monthly']    = [round(v * shade_factor, 1) for v in result['predicted_monthly']]
+        # Include dust_zone so the frontend can display it without a separate API call
+        result['dust_zone'] = {
+            'name':          dust_zone.get('name', 'MEDIUM'),
+            'factor':        dust_zone.get('factor', 0.07),
+            'cleaning_days': dust_zone.get('cleaning_days', 30),
+            'description':   dust_zone.get('description', ''),
+        }
+        result['location'] = {
+            'id':   loc.location_id,
+            'name': loc.name,
+            'governorate': loc.governorate.name_en if loc.governorate else '',
+            'latitude':    loc.latitude,
+            'longitude':   loc.longitude,
+        }
         return Response(result)
 
 class DustZonesView(APIView):
@@ -394,8 +419,8 @@ class AIStatusView(APIView):
                          os.path.join(os.path.dirname(__file__), '..', '..', 'ai_engine', 'models')))
 
         def _model_info(filename, label):
-            path   = os.path.join(models_dir, filename)
-            exists = os.path.exists(path)
+            path    = os.path.join(models_dir, filename)
+            exists  = os.path.exists(path)
             size_mb = round(os.path.getsize(path) / 1_048_576, 2) if exists else None
             return {'loaded': exists, 'size_mb': size_mb, 'label': label}
 
@@ -405,6 +430,20 @@ class AIStatusView(APIView):
             'cnn_lstm':        _model_info('cnn_lstm_best.pth',      'CNN-LSTM Time-Series Predictor'),
             'roof_detector':   _model_info('roof_detector_best.pt',  'YOLOv8 Roof Detector'),
         }
+
+        # Enrich with registry runtime state (in-memory loaded vs file-exists)
+        try:
+            from ai_engine.model_registry import registry
+            reg_status = registry.get_status()
+            for key in ('yield_predictor', 'dust_clusterer'):
+                if key in reg_status:
+                    models_status[key]['in_memory'] = reg_status[key].get('loaded', False)
+                    if 'r2' in reg_status[key]:
+                        models_status[key]['r2']   = reg_status[key]['r2']
+                    if 'mape' in reg_status[key]:
+                        models_status[key]['mape'] = reg_status[key]['mape']
+        except Exception:
+            pass  # registry not available (e.g. test environment)
 
         torch_available   = getattr(settings, 'TORCH_AVAILABLE',   False)
         sklearn_available = getattr(settings, 'SKLEARN_AVAILABLE',  False)

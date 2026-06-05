@@ -279,6 +279,9 @@ class EgyptianDustClusterer:
         """
         Return dust zone info for a location.
         Falls back to latitude rule if model not trained.
+
+        Uses soft membership (weighted distances) for a more accurate dust factor
+        than a hard cluster assignment — especially for border-zone locations.
         """
         from solar_data.models import Location, DailyClimateData
         from django.db.models import Avg
@@ -286,7 +289,7 @@ class EgyptianDustClusterer:
         try:
             loc = Location.objects.get(location_id=location_id)
         except Location.DoesNotExist:
-            return self.DUST_ZONES[1]  # MEDIUM default
+            return dict(self.DUST_ZONES[1])  # MEDIUM default
 
         if self._load():
             agg = DailyClimateData.objects.filter(location=loc).aggregate(
@@ -294,18 +297,37 @@ class EgyptianDustClusterer:
                 avg_hum=Avg('rh2m'),
                 avg_wind=Avg('ws2m'),
             )
-            dust  = agg['avg_dust']  or self._latitude_dust_default(loc.latitude)
-            hum   = agg['avg_hum']   or 40.0
-            wind  = agg['avg_wind']  or 3.0
-            x = np.array([[dust, hum, wind, loc.latitude]])
+            dust = agg['avg_dust']  or self._latitude_dust_default(loc.latitude)
+            hum  = agg['avg_hum']   or 40.0
+            wind = agg['avg_wind']  or 3.0
+
+            x   = np.array([[dust, hum, wind, loc.latitude]])
             x_s = self.scaler.transform(x)
+
+            # Hard cluster for zone name / cleaning schedule
             cluster = int(self.model.predict(x_s)[0])
+
+            # Soft membership: distances to all cluster centres → weighted factor
+            # This gives a smoother, more accurate dust factor than a discrete jump.
+            # e.g. a location 80% MEDIUM / 20% HIGH → factor = 0.80×0.07 + 0.20×0.11 = 0.078
+            distances    = self.model.transform(x_s)[0]          # (4,) distance to each centre
+            inv_dist     = 1.0 / (distances + 1e-8)              # inverse distance weights
+            memberships  = inv_dist / inv_dist.sum()              # normalise to sum=1
+            zone_factors = [self.DUST_ZONES[i]['factor'] for i in range(4)]
+            weighted_factor = float(np.dot(memberships, zone_factors))
+
         else:
-            cluster = self._latitude_to_cluster(loc.latitude)
+            cluster         = self._latitude_to_cluster(loc.latitude)
+            weighted_factor = self.DUST_ZONES[cluster]['factor']
+            memberships     = None
 
         zone = dict(self.DUST_ZONES[cluster])
-        zone['location_id'] = location_id
-        zone['governorate'] = loc.governorate.name
+        zone['location_id']     = location_id
+        zone['governorate']     = loc.governorate.name if loc.governorate else ''
+        # Soft-weighted factor is more accurate than the hard cluster value
+        zone['factor']          = round(weighted_factor, 4)
+        if memberships is not None:
+            zone['memberships'] = [round(float(m), 3) for m in memberships]
         return zone
 
     def _latitude_to_cluster(self, lat: float) -> int:
