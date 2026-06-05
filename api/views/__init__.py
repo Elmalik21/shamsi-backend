@@ -475,6 +475,100 @@ class AIStatusView(APIView):
         })
 
 
+# ── AI Diagnostics endpoint ───────────────────────────────────────────────────
+
+class AIDiagnosticsView(APIView):
+    """
+    GET /api/v1/ai/diagnostics/
+
+    Runs smoke tests on all AI models to verify pipeline health and inference correctness.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        import time
+        import os
+        import tempfile
+        import cv2
+        import numpy as np
+        from ai_engine.model_registry import registry
+        from ai_engine.computer_vision.roof_detector import EgyptianRoofDetector
+        from ai_engine.deep_learning.cnn_lstm_predictor import SolarYieldCNNLSTM
+        from django.utils import timezone
+
+        results = {}
+        all_passed = True
+
+        # 1. Random Forest (Yield Predictor)
+        try:
+            start = time.time()
+            registry.load_all()
+            features = {
+                'avg_ghi': 6.0, 'avg_temperature': 25.0, 'max_temperature': 35.0,
+                'avg_humidity': 40.0, 'avg_wind_speed': 3.5, 'dust_risk_score': 0.05,
+                'latitude': 30.0, 'tilt_angle': 25.0, 'panel_efficiency': 0.22,
+                'temp_coefficient': -0.32, 'system_kw': 10.0
+            }
+            res = registry.yield_predictor.predict(features)
+            lat = round((time.time() - start) * 1000, 1)
+            results['yield_predictor'] = {'status': 'pass', 'latency_ms': lat, 'test_output': res.get('predicted_annual_kwh')}
+        except Exception as e:
+            all_passed = False
+            results['yield_predictor'] = {'status': 'fail', 'error': str(e)}
+
+        # 2. Dust Clusterer
+        try:
+            start = time.time()
+            res = registry.dust_clusterer.predict_zone(1)
+            lat = round((time.time() - start) * 1000, 1)
+            results['dust_clusterer'] = {'status': 'pass', 'latency_ms': lat, 'test_output': res.get('name')}
+        except Exception as e:
+            all_passed = False
+            results['dust_clusterer'] = {'status': 'fail', 'error': str(e)}
+
+        # 3. YOLOv8
+        tmp_path = None
+        try:
+            start = time.time()
+            fd, tmp_path = tempfile.mkstemp(suffix='.jpg')
+            os.close(fd)
+            dummy_img = np.zeros((640, 640, 3), dtype=np.uint8)
+            cv2.rectangle(dummy_img, (200, 200), (440, 440), (255, 255, 255), -1)
+            cv2.imwrite(tmp_path, dummy_img)
+            
+            detector = EgyptianRoofDetector()
+            res = detector.detect_roof(tmp_path)
+            lat = round((time.time() - start) * 1000, 1)
+            results['yolov8_roof'] = {'status': 'pass', 'latency_ms': lat, 'test_output': f"{res.get('usable_area_m2')} m2, {res.get('panel_layout', {}).get('max_panels')} panels"}
+        except Exception as e:
+            all_passed = False
+            results['yolov8_roof'] = {'status': 'fail', 'error': str(e)}
+        finally:
+            if tmp_path and os.path.exists(tmp_path):
+                os.remove(tmp_path)
+
+        # 4. CNN-LSTM
+        try:
+            start = time.time()
+            import torch
+            model = SolarYieldCNNLSTM()
+            net = model.get_net(torch.device('cpu'))
+            net.eval()
+            dummy_sequence = torch.ones((1, 365, 5), dtype=torch.float32)
+            with torch.no_grad():
+                res_monthly = net(dummy_sequence)[0].numpy()
+            predicted_annual_kwh = float(sum(res_monthly)) * 10.0
+            lat = round((time.time() - start) * 1000, 1)
+            results['cnn_lstm'] = {'status': 'pass', 'latency_ms': lat, 'test_output': f"{predicted_annual_kwh:.1f} kWh"}
+        except Exception as e:
+            all_passed = False
+            results['cnn_lstm'] = {'status': 'fail', 'error': str(e)}
+
+        return Response({
+            'status': 'healthy' if all_passed else 'degraded',
+            'timestamp': timezone.now().isoformat(),
+            'models': results
+        }, status=200 if all_passed else 500)
 # ── CNN-LSTM Monthly Forecast endpoint ───────────────────────────────────────
 
 class ForecastMonthlyView(APIView):

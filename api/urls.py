@@ -57,6 +57,7 @@ urlpatterns = [
     path('equipment/installation-costs/', views.InstallationCostListView.as_view(), name='installation-costs'),
     # 5C: AI endpoints
     path('ai/status/', views.AIStatusView.as_view(), name='ai-status'),
+    path('ai/diagnostics/', views.AIDiagnosticsView.as_view(), name='ai-diagnostics'),
     path('ai/predict/', views.PredictYieldView.as_view(), name='ai-predict'),
     path('ai/predict-yield/', views.PredictYieldView.as_view(), name='ai-predict-yield'),
     path('ai/forecast-monthly/', views.ForecastMonthlyView.as_view(), name='ai-forecast-monthly'),
