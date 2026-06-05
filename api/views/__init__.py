@@ -321,7 +321,7 @@ class PredictYieldView(APIView):
         result['location'] = {
             'id':   loc.location_id,
             'name': loc.name,
-            'governorate': loc.governorate.name_en if loc.governorate else '',
+            'governorate': loc.governorate.name if loc.governorate else '',
             'latitude':    loc.latitude,
             'longitude':   loc.longitude,
         }
@@ -597,7 +597,7 @@ class ForecastMonthlyView(APIView):
             'model_r2':   rf_result.get('model_r2',   0.0),
             'model_mape': rf_result.get('model_mape', 0.0),
             'location':   {'id': loc_id, 'name': loc.name,
-                           'governorate': loc.governorate.name_en if loc.governorate else ''},
+                           'governorate': loc.governorate.name if loc.governorate else ''},
             'dust_zone':  dust_zone['name'],
             'note':       'CNN-LSTM model not trained yet. Using RF fallback. '
                           'Run: python manage.py train_ai_models --force to train CNN-LSTM.',
@@ -714,7 +714,7 @@ class ForecastMonthlyView(APIView):
                 'model_r2':   float(ckpt.get('val_r2', 0.93)) if 'val_r2' in ckpt else 0.93,
                 'model_mape': float(ckpt.get('val_mape', 4.5)) if 'val_mape' in ckpt else 4.5,
                 'location':   {'id': loc.location_id, 'name': loc.name,
-                               'governorate': loc.governorate.name_en
+                               'governorate': loc.governorate.name
                                if loc.governorate else ''},
                 'dust_zone':  dust_zone['name'],
             }
