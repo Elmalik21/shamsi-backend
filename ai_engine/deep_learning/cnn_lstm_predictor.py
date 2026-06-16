@@ -93,21 +93,20 @@ class SolarYieldCNNLSTM:
         import torch.nn as nn
 
         class _AttentionPool(nn.Module):
-            """Multi-head self-attention + residual over the time axis."""
+            """Multi-head self-attention with learned query token."""
             def __init__(self, d_model: int, n_heads: int, dropout: float):
                 super().__init__()
                 self.attn = nn.MultiheadAttention(
                     d_model, n_heads, dropout=dropout, batch_first=True
                 )
                 self.norm = nn.LayerNorm(d_model)
-                self.drop = nn.Dropout(dropout)
+                self.query = nn.Parameter(torch.randn(1, 1, d_model))
 
             def forward(self, x):           # x: (B, T, D)
-                attn_out, attn_weights = self.attn(x, x, x)
-                x = self.norm(x + self.drop(attn_out))
-                # Global average pooling over time
-                pooled = x.mean(dim=1)      # (B, D)
-                return pooled, attn_weights
+                q = self.query.expand(x.size(0), -1, -1)
+                out, weights = self.attn(q, x, x)
+                out = self.norm(out + q)
+                return out.squeeze(1), weights
 
         class _Net(nn.Module):
             def __init__(self, cfg):
