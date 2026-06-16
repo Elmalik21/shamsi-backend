@@ -1,6 +1,6 @@
 """
 ai_engine/dust_clustering.py
-K-Means clustering of Egyptian locations into dust/soiling zones.
+Gaussian Mixture Model (GMM) clustering of Egyptian locations into dust/soiling zones.
 Model 3 — Dust Zone Classifier
 """
 from __future__ import annotations
@@ -15,14 +15,14 @@ MODELS_DIR = os.path.join(os.path.dirname(__file__), 'models')
 
 class EgyptianDustClusterer:
     """
-    K-Means clustering of Egyptian locations into dust zones.
+    Gaussian Mixture Model (GMM) clustering of Egyptian locations into dust zones.
     Zones: LOW, MEDIUM, HIGH, EXTREME
 
     Cluster assignments are based on:
       - avg_dust_risk_score (from DailyClimateData)
       - avg_humidity
       - avg_wind_speed
-      - latitude (proxy for desert proximity)
+      - latitude & longitude (geographical proxy for environment)
 
     Reference centres are calibrated on Egyptian geography:
       - LOW    : Nile Delta / Alexandria winter
@@ -62,7 +62,7 @@ class EgyptianDustClusterer:
         """
         Query DailyClimateData and aggregate per location.
         Returns (X, location_ids) where X has columns:
-          [avg_dust_risk, avg_humidity, avg_wind, latitude]
+          [avg_dust_risk, avg_humidity, avg_wind, latitude, longitude]
         """
         from solar_data.models import DailyClimateData, Location
         from django.db.models import Avg
@@ -82,7 +82,7 @@ class EgyptianDustClusterer:
             dust  = agg['avg_dust']  or self._latitude_dust_default(loc.latitude)
             hum   = agg['avg_hum']   or 40.0
             wind  = agg['avg_wind']  or 3.0
-            rows.append([dust, hum, wind, loc.latitude])
+            rows.append([dust, hum, wind, loc.latitude, loc.longitude])
             loc_ids.append(loc.location_id)
 
         return np.array(rows, dtype=float), loc_ids
@@ -99,11 +99,11 @@ class EgyptianDustClusterer:
 
     def train(self):
         """
-        Train K-Means on DailyClimateData features.
-        Assigns cluster centres to named dust zones by latitude ordering.
+        Train GMM on DailyClimateData features.
+        Assigns cluster centres to named dust zones by dust ordering.
         """
         try:
-            from sklearn.cluster import KMeans
+            from sklearn.mixture import GaussianMixture
             from sklearn.preprocessing import StandardScaler
         except ImportError:
             raise ImportError("scikit-learn required: pip install scikit-learn")
@@ -117,18 +117,22 @@ class EgyptianDustClusterer:
         scaler = StandardScaler()
         X_scaled = scaler.fit_transform(X)
 
-        km = KMeans(n_clusters=4, random_state=42, n_init=10, max_iter=300)
-        km.fit(X_scaled)
+        gmm = GaussianMixture(n_components=4, covariance_type='full', random_state=42, n_init=5, max_iter=300)
+        gmm.fit(X_scaled)
 
-        # Re-label clusters by ascending dust risk (centre[:,0] = avg_dust col)
-        centres_orig = scaler.inverse_transform(km.cluster_centers_)
+        # Re-label clusters by ascending dust risk (means_[:,0] = avg_dust col)
+        centres_orig = scaler.inverse_transform(gmm.means_)
         order = np.argsort(centres_orig[:, 0])   # sort by avg_dust ascending
-        remap = {old: new for new, old in enumerate(order)}
-        km.labels_ = np.array([remap[l] for l in km.labels_])
-        # Re-order cluster centres to match LOW=0..EXTREME=3
-        km.cluster_centers_ = km.cluster_centers_[order]
+        
+        # Re-order GMM internal arrays so predict() maps directly to 0=LOW .. 3=EXTREME
+        gmm.means_ = gmm.means_[order]
+        gmm.weights_ = gmm.weights_[order]
+        gmm.covariances_ = gmm.covariances_[order]
+        gmm.precisions_cholesky_ = gmm.precisions_cholesky_[order]
+        if hasattr(gmm, 'precisions_'):
+            gmm.precisions_ = gmm.precisions_[order]
 
-        self.model = km
+        self.model = gmm
         self.scaler = scaler
 
         logger.info("Dust clusterer trained on %d locations.", len(loc_ids))
@@ -146,7 +150,7 @@ class EgyptianDustClusterer:
 
     def train_from_synthetic_data(self, verbose: bool = True):
         """
-        Generate 119 synthetic Egyptian locations, train K-Means (k=4),
+        Generate 119 synthetic Egyptian locations, train GMM (n=4),
         and save to ai_engine/models/dust_clusterer.pkl.
 
         The synthetic locations cover all four Egyptian dust zones:
@@ -160,7 +164,7 @@ class EgyptianDustClusterer:
         (success: bool, metrics: dict)
         """
         try:
-            from sklearn.cluster import KMeans
+            from sklearn.mixture import GaussianMixture
             from sklearn.preprocessing import StandardScaler
             from sklearn.metrics import silhouette_score
         except ImportError:
@@ -184,6 +188,9 @@ class EgyptianDustClusterer:
         ])
         np.random.shuffle(lats)  # type: ignore[arg-type]
         lats = lats[:n_locations]
+        
+        # Approximate longitudes for Egypt (25.0 to 35.0)
+        longs = 30.0 + rng.uniform(-4.0, 4.0, n_locations)
 
         # Derive realistic climate features from latitude
         dust  = 0.15 - (lats - 22.0) * (0.12 / 9.5) + rng.uniform(-0.015, 0.015, n_locations)
@@ -194,55 +201,59 @@ class EgyptianDustClusterer:
         hum  = np.clip(hum,  15.0, 75.0)
         wind = np.clip(wind,  1.0, 10.0)
 
-        # Feature matrix: [avg_dust, avg_humidity, avg_wind, latitude]
-        X = np.column_stack([dust, hum, wind, lats])
+        # Feature matrix: [avg_dust, avg_humidity, avg_wind, latitude, longitude]
+        X = np.column_stack([dust, hum, wind, lats, longs])
 
         if verbose:
-            print(f"\n  Training K-Means on {n_locations} synthetic Egyptian locations...")
+            print(f"\n  Training Gaussian Mixture Model on {n_locations} synthetic Egyptian locations...")
 
         scaler   = StandardScaler()
         X_scaled = scaler.fit_transform(X)
 
         metrics = {}
-        steps = ['Scaling features', 'K-Means fit (k=4)', 'Re-labelling zones', 'Saving']
-        _iter = (_tqdm(steps, desc='K-Means', unit='step')
+        steps = ['Scaling features', 'GMM fit (n=4)', 'Re-labelling zones', 'Saving']
+        _iter = (_tqdm(steps, desc='GMM', unit='step')
                  if (_have_tqdm and verbose) else steps)
 
-        km = None
+        gmm = None
         for step in _iter:
-            if step == 'K-Means fit (k=4)':
-                km = KMeans(n_clusters=4, random_state=42, n_init=10, max_iter=300)
-                km.fit(X_scaled)
+            if step == 'GMM fit (n=4)':
+                gmm = GaussianMixture(n_components=4, covariance_type='full', random_state=42, n_init=5, max_iter=300)
+                gmm.fit(X_scaled)
             elif step == 'Re-labelling zones':
                 # Re-label clusters by ascending dust risk (column 0 = dust)
-                centres_orig = scaler.inverse_transform(km.cluster_centers_)
+                centres_orig = scaler.inverse_transform(gmm.means_)
                 order = np.argsort(centres_orig[:, 0])
-                remap = {int(old): new for new, old in enumerate(order)}
-                km.labels_ = np.array([remap[int(l)] for l in km.labels_])
-                km.cluster_centers_ = km.cluster_centers_[order]
+                
+                gmm.means_ = gmm.means_[order]
+                gmm.weights_ = gmm.weights_[order]
+                gmm.covariances_ = gmm.covariances_[order]
+                gmm.precisions_cholesky_ = gmm.precisions_cholesky_[order]
+                if hasattr(gmm, 'precisions_'):
+                    gmm.precisions_ = gmm.precisions_[order]
+                
+                labels = gmm.predict(X_scaled)
 
                 # Metrics
-                sil = float(silhouette_score(X_scaled, km.labels_))
+                sil = float(silhouette_score(X_scaled, labels))
                 metrics = {
-                    'inertia':          round(float(km.inertia_), 2),
                     'silhouette_score': round(sil, 4),
                     'n_locations':      n_locations,
                     'cluster_counts': {
-                        self.DUST_ZONES[i]['name']: int(np.sum(km.labels_ == i))
+                        self.DUST_ZONES[i]['name']: int(np.sum(labels == i))
                         for i in range(4)
                     },
                 }
 
                 if verbose:
-                    print(f"\n  K-Means Results:")
-                    print(f"    Inertia      : {metrics['inertia']:.2f}")
+                    print(f"\n  GMM Results:")
                     print(f"    Silhouette   : {sil:.4f}")
                     for zone_name, count in metrics['cluster_counts'].items():
                         print(f"    {zone_name:<10}: {count} locations")
 
             elif step == 'Saving':
                 import joblib
-                self.model  = km
+                self.model  = gmm
                 self.scaler = scaler
                 os.makedirs(MODELS_DIR, exist_ok=True)
                 joblib.dump({'model': self.model, 'scaler': self.scaler}, self._model_path)
@@ -301,18 +312,15 @@ class EgyptianDustClusterer:
             hum  = agg['avg_hum']   or 40.0
             wind = agg['avg_wind']  or 3.0
 
-            x   = np.array([[dust, hum, wind, loc.latitude]])
+            x   = np.array([[dust, hum, wind, loc.latitude, loc.longitude]])
             x_s = self.scaler.transform(x)
 
             # Hard cluster for zone name / cleaning schedule
             cluster = int(self.model.predict(x_s)[0])
 
-            # Soft membership: distances to all cluster centres → weighted factor
-            # This gives a smoother, more accurate dust factor than a discrete jump.
-            # e.g. a location 80% MEDIUM / 20% HIGH → factor = 0.80×0.07 + 0.20×0.11 = 0.078
-            distances    = self.model.transform(x_s)[0]          # (4,) distance to each centre
-            inv_dist     = 1.0 / (distances + 1e-8)              # inverse distance weights
-            memberships  = inv_dist / inv_dist.sum()              # normalise to sum=1
+            # Soft membership: GMM outputs true probabilities (Sum = 1.0)
+            # This handles overlapping zones and elliptical cluster boundaries naturally
+            memberships  = self.model.predict_proba(x_s)[0]       # (4,) probability of each cluster
             zone_factors = [self.DUST_ZONES[i]['factor'] for i in range(4)]
             weighted_factor = float(np.dot(memberships, zone_factors))
 
@@ -350,7 +358,6 @@ class EgyptianDustClusterer:
         if self.model is None:
             print("Model not trained yet.")
             return
-        labels = self.model.labels_
-        for idx, info in self.DUST_ZONES.items():
-            count = int(np.sum(labels == idx))
-            print(f"  Cluster {idx} [{info['name']:8s}]: {count} locations")
+        # Create dummy locations or use a cached labels array if needed.
+        # GMM doesn't store labels_ like KMeans.
+        print("Model is GMM. Use synthetic generator to view distribution metrics.")
