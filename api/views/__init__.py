@@ -766,7 +766,7 @@ class ForecastMonthlyView(APIView):
             if nasa_daily:
                 daily = nasa_daily[:365]
             else:
-                daily = list(loc.daily_data.all().order_by('-date').values(
+                daily = list(loc.climate_data.all().order_by('-date').values(
                     'allsky_sfc_sw_dwn', 't2m', 'rh2m', 'ws2m', 'dust_risk_score'
                 )[:365])
 
