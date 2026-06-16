@@ -148,11 +148,11 @@ class EgyptianYieldPredictorV2:
 
                     # ── TARGET: specific yield (kWh / kWp) — scale-free ──────
                     temp_loss = max(0.0, (avg_temp - 25) * abs(temp_coeff) * 0.01)
-                    # specific_yield = GHI * 365 * eff * loss_factors
+                    # specific_yield = GHI * 365 * PR * loss_factors
                     # system_kw cancels out when we normalise by system_kw:
-                    #   annual_kWh / system_kw = GHI*365*eff*(1-temp_loss)*(1-dust)
+                    #   annual_kWh / system_kw = GHI*365*0.86*(1-temp_loss)*(1-dust)
                     specific_yield = (
-                        avg_ghi * 365 * eff
+                        avg_ghi * 365 * 0.86
                         * (1 - temp_loss)
                         * (1 - dust_risk)
                     )
@@ -384,9 +384,9 @@ class EgyptianYieldPredictorV2:
         tilt_r  = lat_r + np.tile(tilts_offset, n_locations)
         temp_c_r = np.full(n, -0.32)
 
-        # Target: specific yield = GHI×365×eff×(1-temp_loss)×(1-dust) + noise
+        # Target: specific yield = GHI×365×PR×(1-temp_loss)×(1-dust) + noise
         temp_loss_r = np.maximum(0.0, (temp_r - 25) * np.abs(temp_c_r) * 0.01)
-        y = (ghi_r * 365 * eff_r * (1 - temp_loss_r) * (1 - dust_r)
+        y = (ghi_r * 365 * 0.86 * (1 - temp_loss_r) * (1 - dust_r)
              * rng.uniform(0.97, 1.03, n))
 
         X = np.column_stack([ghi_r, temp_r, max_t_r, hum_r, wind_r,
