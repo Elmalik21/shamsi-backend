@@ -56,7 +56,7 @@ class EgyptianROICalculator:
         cumulative_chart = []
 
         for scenario, params in self._SCENARIOS.items():
-            payback, cum_savings = self.calculate_payback(
+            payback, cum_savings, npv = self.calculate_payback(
                 cost=system_cost_egp,
                 initial_savings=annual_savings_egp * params['yield_factor'],
                 escalation_rate=params['escalation'],
@@ -67,6 +67,7 @@ class EgyptianROICalculator:
                 'payback_years':  payback,
                 'net_roi_25yr':   round(cum_savings - system_cost_egp, 0),
                 'cumulative_25yr': round(cum_savings, 0),
+                'npv_25yr':       round(npv, 0),
             }
             if scenario == 'realistic':
                 cumulative_chart = self._build_cumulative_chart(
@@ -83,6 +84,9 @@ class EgyptianROICalculator:
             'roi_25yr_low':   results['pessimistic']['net_roi_25yr'],
             'roi_25yr_mid':   results['realistic']['net_roi_25yr'],
             'roi_25yr_high':  results['optimistic']['net_roi_25yr'],
+            'npv_25yr_low':   results['pessimistic']['npv_25yr'],
+            'npv_25yr_mid':   results['realistic']['npv_25yr'],
+            'npv_25yr_high':  results['optimistic']['npv_25yr'],
             'cumulative_savings_chart': cumulative_chart,
             'system_cost_egp':     round(system_cost_egp, 0),
             'annual_savings_yr1':  round(annual_savings_egp, 0),
@@ -90,25 +94,31 @@ class EgyptianROICalculator:
 
     def calculate_payback(self, cost: float, initial_savings: float,
                            escalation_rate: float, degradation_rate: float,
-                           years: int = 25) -> tuple[float, float]:
+                           years: int = 25) -> tuple[float, float, float]:
         """
-        Calculate payback year and 25-year cumulative savings.
+        Calculate payback year, 25-year cumulative savings, and Net Present Value (NPV).
 
         Savings grow each year by escalation_rate but degrade by degradation_rate.
         Annual maintenance is deducted.
 
         Returns
         -------
-        (payback_year: float, cumulative_savings_25yr: float)
+        (payback_year: float, cumulative_savings_25yr: float, npv_25yr: float)
         """
         cumulative  = 0.0
+        npv         = -cost
         saving      = initial_savings
         payback     = float(years)   # default: not reached within period
 
         for yr in range(1, years + 1):
-            saving     *= (1 + escalation_rate) * (1 - degradation_rate)
+            if yr > 1:
+                saving *= (1 + escalation_rate) * (1 - degradation_rate)
+            else:
+                saving *= (1 - degradation_rate)
+                
             net_saving  = saving - self.MAINTENANCE_COST_ANNUAL
             cumulative += net_saving
+            npv += net_saving / ((1 + self.INFLATION_RATE) ** yr)
 
             if cumulative >= cost and payback == float(years):
                 # Interpolate partial year
@@ -117,7 +127,7 @@ class EgyptianROICalculator:
                     frac = (cost - prev_cum) / net_saving
                     payback = round(yr - 1 + frac, 1)
 
-        return payback, cumulative
+        return payback, cumulative, npv
 
     def _build_cumulative_chart(self, cost: float, initial_savings: float,
                                  escalation: float, degradation: float) -> list:
@@ -126,7 +136,11 @@ class EgyptianROICalculator:
         cumulative = 0.0
         saving = initial_savings
         for yr in range(1, 26):
-            saving *= (1 + escalation) * (1 - degradation)
+            if yr > 1:
+                saving *= (1 + escalation) * (1 - degradation)
+            else:
+                saving *= (1 - degradation)
+                
             net_saving = saving - self.MAINTENANCE_COST_ANNUAL
             cumulative += net_saving
             chart.append(round(cumulative - cost, 0))

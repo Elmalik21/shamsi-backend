@@ -115,15 +115,14 @@ class SolarYieldCNNLSTM:
 
                 # ── Stage 1: Temporal CNN ────────────────────────────────────
                 self.cnn = nn.Sequential(
-                    nn.Conv1d(cfg['in_feats'], 64,
-                              kernel_size=7, padding=3),
+                    nn.Conv1d(cfg['in_feats'], 64, kernel_size=7, padding=3),
                     nn.GELU(),
+                    nn.MaxPool1d(2),
                     nn.BatchNorm1d(64),
                     nn.Conv1d(64, 128, kernel_size=14, padding=7),
                     nn.GELU(),
-                    nn.BatchNorm1d(128),
-                    nn.MaxPool1d(kernel_size=2, stride=2),
-                    nn.Dropout(cfg['dropout']),
+                    nn.MaxPool1d(2),
+                    nn.BatchNorm1d(128)
                 )
 
                 # ── Stage 2: Bidirectional LSTM ───────────────────────────────
@@ -153,10 +152,10 @@ class SolarYieldCNNLSTM:
 
             def forward(self, x):           # x: (B, T, F)
                 # CNN expects (B, F, T)
-                c = self.cnn(x.permute(0, 2, 1))  # (B, 128, T//2)
-                c = c.permute(0, 2, 1)             # (B, T//2, 128)
+                c = self.cnn(x.permute(0, 2, 1))  # (B, 128, T//4)
+                c = c.permute(0, 2, 1)             # (B, T//4, 128)
 
-                lstm_out, _ = self.lstm(c)          # (B, T//2, 2H)
+                lstm_out, _ = self.lstm(c)          # (B, T//4, 2H)
 
                 pooled, self.last_attn_weights = self.attn_pool(lstm_out)
 
