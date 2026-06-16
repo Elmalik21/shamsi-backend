@@ -31,10 +31,7 @@ class Command(BaseCommand):
             '--train-cnn', action='store_true',
             help='Train the CNN-LSTM deep learning predictor',
         )
-        parser.add_argument(
-            '--skip-yield', action='store_true',
-            help='Skip Random Forest yield predictor training',
-        )
+
         parser.add_argument(
             '--force', action='store_true',
             help='Retrain even if model files already exist (default: skip when file is large enough)',
