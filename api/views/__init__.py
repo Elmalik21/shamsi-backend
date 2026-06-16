@@ -228,11 +228,21 @@ class OptimizeView(APIView):
     def post(self, request):
         from ai_engine.optimizer        import EgyptianSolarOptimizer
         from ai_engine.decision_support import EgyptianDecisionSupport
+        from ai_engine.nasa_client      import find_nearest_location
+
+        data = dict(request.data)
+        
+        # Resolve dynamic location if location_id is missing
+        if not data.get('location_id') and data.get('latitude') and data.get('longitude'):
+            loc = find_nearest_location(float(data['latitude']), float(data['longitude']))
+            if loc:
+                data['location_id'] = loc.location_id
+
         required = ['location_id', 'available_area_m2', 'monthly_consumption_kwh', 'budget_egp']
         for field in required:
-            if field not in request.data:
+            if not data.get(field):
                 return Response({'error': f'{field} is required'}, status=400)
-        data = dict(request.data)
+                
         data.setdefault('usage_type', 'RESIDENTIAL')
         try:
             result = EgyptianSolarOptimizer().run(data)
@@ -335,8 +345,14 @@ class PredictYieldView(APIView):
                 'longitude': loc.longitude
             }
         else:
-            dust_zone = {'name': 'Dynamic', 'cluster': 'Unknown', 'factor': 0.10, 'description': 'Dynamic location'}
             lat_to_use = float(req_lat)
+            dust_val = agg.get('avg_dust') if agg else None
+            hum_val  = agg['avg_hum'] if agg and agg.get('avg_hum') else 40.0
+            wind_val = agg['avg_wind'] if agg and agg.get('avg_wind') else 3.0
+            dust_zone = dust_clusterer.predict_zone_by_features(
+                lat=lat_to_use, lon=float(req_lon),
+                dust=dust_val, hum=hum_val, wind=wind_val
+            )
             loc_dict = {
                 'id': None,
                 'name': 'Dynamic Coords',

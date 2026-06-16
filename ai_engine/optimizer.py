@@ -113,10 +113,9 @@ class EgyptianSolarOptimizer:
                     # physics fallback if RF unavailable
                     ghi  = climate['avg_ghi']
                     temp = climate['avg_temperature']
-                    eff  = panel.efficiency_pct / 100.0
                     tc   = panel.temp_coefficient_pct
                     tl   = max(0.0, (temp - 25) * abs(tc) * 0.01)
-                    cache[key] = ghi * 365 * eff * (1 - tl) * (1 - dust_factor)
+                    cache[key] = ghi * 365 * 0.86 * (1 - tl) * (1 - dust_factor)
 
         logger.debug(
             "Yield cache built: %d entries for %d panels × %d tilts",

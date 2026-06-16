@@ -286,6 +286,31 @@ class EgyptianDustClusterer:
 
     # ── Prediction ────────────────────────────────────────────────────────────
 
+    def predict_zone_by_features(self, lat: float, lon: float, dust: float = None, hum: float = 40.0, wind: float = 3.0) -> dict:
+        if dust is None:
+            dust = self._latitude_dust_default(lat)
+
+        if self._load():
+            x   = np.array([[dust, hum, wind, lat, lon]])
+            x_s = self.scaler.transform(x)
+
+            cluster = int(self.model.predict(x_s)[0])
+            memberships  = self.model.predict_proba(x_s)[0]
+            zone_factors = [self.DUST_ZONES[i]['factor'] for i in range(4)]
+            weighted_factor = float(np.dot(memberships, zone_factors))
+        else:
+            cluster         = self._latitude_to_cluster(lat)
+            weighted_factor = self.DUST_ZONES[cluster]['factor']
+            memberships     = None
+
+        zone = dict(self.DUST_ZONES[cluster])
+        zone['location_id']     = None
+        zone['governorate']     = 'Dynamic'
+        zone['factor']          = round(weighted_factor, 4)
+        if memberships is not None:
+            zone['memberships'] = [round(float(m), 3) for m in memberships]
+        return zone
+
     def predict_zone(self, location_id: int) -> dict:
         """
         Return dust zone info for a location.
@@ -302,40 +327,18 @@ class EgyptianDustClusterer:
         except Location.DoesNotExist:
             return dict(self.DUST_ZONES[1])  # MEDIUM default
 
-        if self._load():
-            agg = DailyClimateData.objects.filter(location=loc).aggregate(
-                avg_dust=Avg('dust_risk_score'),
-                avg_hum=Avg('rh2m'),
-                avg_wind=Avg('ws2m'),
-            )
-            dust = agg['avg_dust']  or self._latitude_dust_default(loc.latitude)
-            hum  = agg['avg_hum']   or 40.0
-            wind = agg['avg_wind']  or 3.0
+        agg = DailyClimateData.objects.filter(location=loc).aggregate(
+            avg_dust=Avg('dust_risk_score'),
+            avg_hum=Avg('rh2m'),
+            avg_wind=Avg('ws2m'),
+        )
+        dust = agg['avg_dust']
+        hum  = agg['avg_hum']  if agg['avg_hum'] is not None else 40.0
+        wind = agg['avg_wind'] if agg['avg_wind'] is not None else 3.0
 
-            x   = np.array([[dust, hum, wind, loc.latitude, loc.longitude]])
-            x_s = self.scaler.transform(x)
-
-            # Hard cluster for zone name / cleaning schedule
-            cluster = int(self.model.predict(x_s)[0])
-
-            # Soft membership: GMM outputs true probabilities (Sum = 1.0)
-            # This handles overlapping zones and elliptical cluster boundaries naturally
-            memberships  = self.model.predict_proba(x_s)[0]       # (4,) probability of each cluster
-            zone_factors = [self.DUST_ZONES[i]['factor'] for i in range(4)]
-            weighted_factor = float(np.dot(memberships, zone_factors))
-
-        else:
-            cluster         = self._latitude_to_cluster(loc.latitude)
-            weighted_factor = self.DUST_ZONES[cluster]['factor']
-            memberships     = None
-
-        zone = dict(self.DUST_ZONES[cluster])
-        zone['location_id']     = location_id
-        zone['governorate']     = loc.governorate.name if loc.governorate else ''
-        # Soft-weighted factor is more accurate than the hard cluster value
-        zone['factor']          = round(weighted_factor, 4)
-        if memberships is not None:
-            zone['memberships'] = [round(float(m), 3) for m in memberships]
+        zone = self.predict_zone_by_features(loc.latitude, loc.longitude, dust, hum, wind)
+        zone['location_id'] = location_id
+        zone['governorate'] = loc.governorate.name if loc.governorate else ''
         return zone
 
     def _latitude_to_cluster(self, lat: float) -> int:
