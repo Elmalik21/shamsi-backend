@@ -325,7 +325,7 @@ class PredictYieldView(APIView):
             )
             
         if loc:
-            dust_zone = dust_clusterer.get_zone_for_location(loc)
+            dust_zone = dust_clusterer.predict_zone(loc.location_id)
             lat_to_use = loc.latitude
             loc_dict = {
                 'id': loc.location_id,
@@ -771,7 +771,16 @@ class ForecastMonthlyView(APIView):
                 )[:365])
 
             if len(daily) < 180:
-                return None   # Not enough data
+                # Fallback to NASA API if DB doesn't have enough records
+                if loc:
+                    from ai_engine.nasa_client import fetch_nasa_climate_for_coords
+                    nd = fetch_nasa_climate_for_coords(loc.latitude, loc.longitude)
+                    if nd and nd.get('daily_records'):
+                        daily = nd['daily_records'][:365]
+                    else:
+                        return None   # Not enough data even from NASA
+                else:
+                    return None # Dynamic location without nasa_daily
 
             # Pad if missing a few days
             if len(daily) < 365:
