@@ -213,7 +213,8 @@ class SolarYieldCNNLSTM:
             temp = float(day.get('t2m') or 0.0)
             hum = float(day.get('rh2m') or 0.0)
             wind = float(day.get('ws2m') or 0.0)
-            dust = float(day.get('dust_risk_score', dust_risk))
+            dust_val = day.get('dust_risk_score')
+            dust = float(dust_val if dust_val is not None else dust_risk)
             rows_for_tensor.append([ghi, temp, hum, wind, dust])
 
         seq_np = np.array(rows_for_tensor, dtype=np.float32)
