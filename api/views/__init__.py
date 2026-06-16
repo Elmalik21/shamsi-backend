@@ -272,7 +272,6 @@ class OptimizeView(APIView):
 class PredictYieldView(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
-        # Use singleton from registry (loaded at startup) — avoids per-request disk I/O
         try:
             from ai_engine.model_registry import registry
             yield_predictor  = registry.yield_predictor
@@ -280,51 +279,87 @@ class PredictYieldView(APIView):
             if yield_predictor is None:
                 raise AttributeError("not loaded")
         except Exception:
-            from ai_engine.yield_predictor import EgyptianYieldPredictor
+            from ai_engine.yield_predictor_v2 import EgyptianYieldPredictorV2
             from ai_engine.dust_clustering import EgyptianDustClusterer
-            yield_predictor = EgyptianYieldPredictor()
+            yield_predictor = EgyptianYieldPredictorV2()
             dust_clusterer  = EgyptianDustClusterer()
 
         from solar_data.models import Location, DailyClimateData
         from django.db.models import Avg, Max
-        loc_id = request.data.get('location_id', 1)
+        from ai_engine.nasa_client import fetch_nasa_climate_for_coords, find_nearest_location
+        
         sys_kw = float(request.data.get('system_kw', 10.0))
         eff    = float(request.data.get('panel_efficiency', 0.22))
         tilt   = float(request.data.get('tilt_angle', 30.0))
         shade  = float(request.data.get('shading_loss_pct', 5.0))
-        try:
-            loc = Location.objects.get(location_id=loc_id)
-        except Location.DoesNotExist:
-            return Response({'error': f'Location {loc_id} not found'}, status=404)
-        agg = DailyClimateData.objects.filter(location=loc).aggregate(
-            avg_ghi=Avg('allsky_sfc_sw_dwn'), avg_temp=Avg('t2m'),
-            max_temp=Max('t2m_max'), avg_hum=Avg('rh2m'), avg_wind=Avg('ws2m'),
-        )
-        dust_zone = dust_clusterer.predict_zone(loc_id)
+        
+        loc_id = request.data.get('location_id')
+        req_lat = request.data.get('latitude')
+        req_lon = request.data.get('longitude')
+        
+        loc = None
+        nasa_data = None
+        agg = None
+        
+        if loc_id:
+            try:
+                loc = Location.objects.get(location_id=int(loc_id))
+            except (ValueError, Location.DoesNotExist):
+                pass
+                
+        if not loc and req_lat and req_lon:
+            lat, lon = float(req_lat), float(req_lon)
+            nasa_data = fetch_nasa_climate_for_coords(lat, lon)
+            if not nasa_data:
+                loc = find_nearest_location(lat, lon)
+            else:
+                agg = nasa_data['agg']
+                
+        if not loc and not agg:
+            return Response({'error': 'Location not found and dynamic NASA fetch failed.'}, status=404)
+            
+        if loc and not agg:
+            agg = DailyClimateData.objects.filter(location=loc).aggregate(
+                avg_ghi=Avg('allsky_sfc_sw_dwn'), avg_temp=Avg('t2m'),
+                max_temp=Max('t2m_max'), avg_hum=Avg('rh2m'), avg_wind=Avg('ws2m'),
+            )
+            
+        if loc:
+            dust_zone = dust_clusterer.get_zone_for_location(loc)
+            lat_to_use = loc.latitude
+            loc_dict = {
+                'id': loc.location_id,
+                'name': loc.name,
+                'governorate': loc.governorate.name if loc.governorate else '',
+                'latitude': loc.latitude,
+                'longitude': loc.longitude
+            }
+        else:
+            dust_zone = {'name': 'Dynamic', 'cluster': 'Unknown', 'factor': 0.10, 'description': 'Dynamic location'}
+            lat_to_use = float(req_lat)
+            loc_dict = {
+                'id': None,
+                'name': 'Dynamic Coords',
+                'governorate': '',
+                'latitude': float(req_lat),
+                'longitude': float(req_lon)
+            }
+            
         result = yield_predictor.predict({
             'avg_ghi': agg['avg_ghi'] or 5.5, 'avg_temperature': agg['avg_temp'] or 28.0,
             'max_temperature': agg['max_temp'] or 40.0, 'avg_humidity': agg['avg_hum'] or 40.0,
             'avg_wind_speed': agg['avg_wind'] or 3.5, 'dust_risk_score': dust_zone['factor'],
-            'latitude': loc.latitude, 'tilt_angle': tilt, 'panel_efficiency': eff,
-            'temp_coefficient': -0.30, 'system_kw': sys_kw,
-        })
+            'latitude': lat_to_use, 'tilt_angle': tilt, 'panel_efficiency': eff,
+            'temp_coefficient': -0.30,
+        }, system_kw=sys_kw)
+        
         shade_factor = 1 - shade / 100
         result['predicted_annual_kwh'] = round(result['predicted_annual_kwh'] * shade_factor, 1)
         result['predicted_monthly']    = [round(v * shade_factor, 1) for v in result['predicted_monthly']]
-        # Include dust_zone so the frontend can display it without a separate API call
-        result['dust_zone'] = {
-            'name':          dust_zone.get('name', 'MEDIUM'),
-            'factor':        dust_zone.get('factor', 0.07),
-            'cleaning_days': dust_zone.get('cleaning_days', 30),
-            'description':   dust_zone.get('description', ''),
-        }
-        result['location'] = {
-            'id':   loc.location_id,
-            'name': loc.name,
-            'governorate': loc.governorate.name if loc.governorate else '',
-            'latitude':    loc.latitude,
-            'longitude':   loc.longitude,
-        }
+        
+        result['dust_zone'] = dust_zone
+        result['location'] = loc_dict
+        
         return Response(result)
 
 class DustZonesView(APIView):
@@ -603,48 +638,66 @@ class ForecastMonthlyView(APIView):
     def post(self, request):
         from solar_data.models import Location, DailyClimateData
         from django.db.models import Avg, Max
-        from ai_engine.yield_predictor  import EgyptianYieldPredictor
-        from ai_engine.dust_clustering  import EgyptianDustClusterer
-        from django.conf import settings
+        from ai_engine.nasa_client import fetch_nasa_climate_for_coords, find_nearest_location
 
-        loc_id        = int(request.data.get('location_id', 1))
-        system_kw     = float(request.data.get('system_kw', 10.0))
-        panel_eff     = float(request.data.get('panel_efficiency', 0.22))
-        tilt          = float(request.data.get('tilt_angle', 30.0))
+        loc_id = request.data.get('location_id')
+        req_lat = request.data.get('latitude')
+        req_lon = request.data.get('longitude')
+        
+        loc = None
+        nasa_data = None
+        agg = None
+        
+        if loc_id:
+            try:
+                loc = Location.objects.select_related('governorate').get(location_id=int(loc_id))
+            except (ValueError, Location.DoesNotExist):
+                pass
+                
+        if not loc and req_lat and req_lon:
+            lat, lon = float(req_lat), float(req_lon)
+            nasa_data = fetch_nasa_climate_for_coords(lat, lon)
+            if not nasa_data:
+                loc = find_nearest_location(lat, lon)
+            else:
+                agg = nasa_data['agg']
+                
+        if not loc and not agg:
+            return Response({'error': 'Location not found and dynamic fetching failed.'}, status=404)
+
+        if loc and not agg:
+            agg = DailyClimateData.objects.filter(location=loc).aggregate(
+                avg_ghi=Avg('allsky_sfc_sw_dwn'),
+                avg_temp=Avg('t2m'),
+                max_temp=Max('t2m_max'),
+                avg_hum=Avg('rh2m'),
+                avg_wind=Avg('ws2m')
+            )
         forecast_years = min(int(request.data.get('forecast_years', 1)), 3)
-
-        # ── Validate location ─────────────────────────────────────────────────
-        try:
-            loc = Location.objects.select_related('governorate').get(location_id=loc_id)
-        except Location.DoesNotExist:
-            return Response({'error': f'Location {loc_id} not found.'}, status=404)
+        system_kw = float(request.data.get('system_kw', 10.0))
+        panel_eff = float(request.data.get('panel_efficiency', 0.22))
+        tilt = float(request.data.get('tilt_angle', 30.0))
 
         # ── Fetch climate data ────────────────────────────────────────────────
-        agg = DailyClimateData.objects.filter(location=loc).aggregate(
-            avg_ghi=Avg('allsky_sfc_sw_dwn'),
-            avg_temp=Avg('t2m'),
-            max_temp=Max('t2m_max'),
-            avg_hum=Avg('rh2m'),
-            avg_wind=Avg('ws2m'),
-        )
         avg_ghi  = agg['avg_ghi']  or 5.5
         avg_temp = agg['avg_temp'] or 28.0
         max_temp = agg['max_temp'] or 40.0
         avg_hum  = agg['avg_hum']  or 40.0
         avg_wind = agg['avg_wind'] or 3.5
 
-        dust_zone = EgyptianDustClusterer().predict_zone(loc_id)
+        from ai_engine.dust_clustering  import EgyptianDustClusterer
+        dust_zone = EgyptianDustClusterer().predict_zone(loc.location_id if loc else 1)
 
         # ── Try CNN-LSTM first ────────────────────────────────────────────────
         cnn_result = self._try_cnn_lstm(
-            loc, system_kw, panel_eff, tilt,
-            avg_ghi, avg_temp, avg_hum, avg_wind, dust_zone,
-            forecast_years, settings,
+            loc, system_kw, panel_eff, tilt, dust_zone,
+            forecast_years, nasa_daily=nasa_data['daily_records'] if nasa_data else None
         )
         if cnn_result is not None:
             return Response(cnn_result)
 
         # ── Fallback: RF predictor + physics monthly breakdown ────────────────
+        from ai_engine.yield_predictor_v2 import EgyptianYieldPredictorV2
         features = {
             'avg_ghi':          avg_ghi,
             'avg_temperature':  avg_temp,
@@ -652,13 +705,12 @@ class ForecastMonthlyView(APIView):
             'avg_humidity':     avg_hum,
             'avg_wind_speed':   avg_wind,
             'dust_risk_score':  dust_zone['factor'],
-            'latitude':         loc.latitude,
+            'latitude':         loc.latitude if loc else float(req_lat),
             'tilt_angle':       tilt,
             'panel_efficiency': panel_eff,
             'temp_coefficient': -0.30,
-            'system_kw':        system_kw,
         }
-        rf_result     = EgyptianYieldPredictor().predict(features)
+        rf_result     = EgyptianYieldPredictorV2().predict(features, system_kw=system_kw)
         monthly       = rf_result['predicted_monthly']
         annual_total  = rf_result['predicted_annual_kwh']
 
@@ -674,6 +726,7 @@ class ForecastMonthlyView(APIView):
 
         months_labels = ['Jan','Feb','Mar','Apr','May','Jun',
                          'Jul','Aug','Sep','Oct','Nov','Dec']
+        import numpy as np
         peak_idx = int(np.argmax(monthly))
         low_idx  = int(np.argmin(monthly))
 
@@ -690,129 +743,69 @@ class ForecastMonthlyView(APIView):
             },
             'model_r2':   rf_result.get('model_r2',   0.0),
             'model_mape': rf_result.get('model_mape', 0.0),
-            'location':   {'id': loc_id, 'name': loc.name,
-                           'governorate': loc.governorate.name if loc.governorate else ''},
+            'location':   {'id': loc.location_id if loc else None, 'name': loc.name if loc else 'Dynamic',
+                           'governorate': loc.governorate.name if loc and loc.governorate else ''},
             'dust_zone':  dust_zone['name'],
             'note':       'CNN-LSTM model not trained yet. Using RF fallback. '
                           'Run: python manage.py train_ai_models --force to train CNN-LSTM.',
         })
 
     def _try_cnn_lstm(
-        self, loc, system_kw, panel_eff, tilt,
-        avg_ghi, avg_temp, avg_hum, avg_wind, dust_zone,
-        forecast_years, settings,
+        self, loc, system_kw, panel_eff, tilt, dust_zone,
+        forecast_years, nasa_daily=None
     ):
         """
-        Attempt CNN-LSTM inference.
-        Returns a result dict if successful, None otherwise.
-
-        The CNN-LSTM expects a (1, 365, 5) input:
-        [day_GHI, day_temp, day_humidity, day_wind, day_dust_risk]
-        built from daily climate data for the location.
+        Attempt CNN-LSTM inference via the global model registry.
         """
-        import os
-        from django.conf import settings as s
-
-        model_path = os.path.join(
-            str(getattr(s, 'AI_MODELS_DIR',
-                os.path.join(os.path.dirname(__file__), '..', '..', 'ai_engine', 'models'))),
-            'cnn_lstm_best.pth',
-        )
-        if not os.path.exists(model_path):
+        from ai_engine.model_registry import registry
+        
+        if not registry.is_ready('cnn_lstm') or registry.cnn_lstm is None:
             return None
-
-        torch_available = getattr(s, 'TORCH_AVAILABLE', False)
-        if not torch_available:
-            return None
-
+            
         try:
-            import torch
-            import numpy as np
-            from solar_data.models import DailyClimateData
-            from ai_engine.deep_learning.cnn_lstm_predictor import SolarYieldCNNLSTM
+            if nasa_daily:
+                daily = nasa_daily[:365]
+            else:
+                daily = list(loc.daily_data.all().order_by('-date').values(
+                    'allsky_sfc_sw_dwn', 't2m', 'rh2m', 'ws2m', 'dust_risk_score'
+                )[:365])
 
-            # Build 365-day input sequence from most recent year of data
-            qs = (DailyClimateData.objects
-                  .filter(location=loc)
-                  .order_by('-date')[:365]
-                  .values('allsky_sfc_sw_dwn', 't2m', 'rh2m', 'ws2m', 'dust_risk_score'))
+            if len(daily) < 180:
+                return None   # Not enough data
 
-            rows = list(qs)
-            if len(rows) < 180:
-                return None   # Not enough data — skip CNN-LSTM
-
-            # Pad/truncate to exactly 365 rows
-            while len(rows) < 365:
-                rows.append(rows[-1])  # forward-fill last day
-            rows = rows[:365]
-            rows.reverse()  # chronological order (oldest → newest)
-
-            X = np.array([
-                [
-                    r['allsky_sfc_sw_dwn'] or avg_ghi,
-                    r['t2m']              or avg_temp,
-                    r['rh2m']             or avg_hum,
-                    r['ws2m']             or avg_wind,
-                    r['dust_risk_score']  or dust_zone['factor'],
-                ]
-                for r in rows
-            ], dtype=np.float32)  # (365, 5)
-
-            # Normalise inputs (simple min-max per feature)
-            norms = np.array([[0.0, 12.0], [0.0, 50.0], [0.0, 100.0],
-                               [0.0, 15.0], [0.0, 0.20]], dtype=np.float32)
-            X_norm = (X - norms[:, 0]) / (norms[:, 1] - norms[:, 0] + 1e-8)
-            X_t = torch.tensor(X_norm[None], dtype=torch.float32)  # (1, 365, 5)
-
-            device = torch.device('cpu')  # Railway Free Tier — CPU only
-            net_wrapper = SolarYieldCNNLSTM()
-            net = net_wrapper.get_net(device)
-
-            ckpt = torch.load(model_path, map_location=device)
-            net.load_state_dict(ckpt['state_dict'])
-            net.eval()
-
-            with torch.no_grad():
-                specific_yield_monthly = net(X_t)[0].cpu().numpy()  # (12,) kWh/kWp/month
-
-            # Scale to actual system
-            monthly = [round(float(v) * system_kw, 1) for v in specific_yield_monthly]
-            annual_total = round(sum(monthly), 1)
-
-            months_labels = ['Jan','Feb','Mar','Apr','May','Jun',
-                             'Jul','Aug','Sep','Oct','Nov','Dec']
-            peak_idx = int(np.argmax(monthly))
-            low_idx  = int(np.argmin(monthly))
-
+            # Pad if missing a few days
+            if len(daily) < 365:
+                avg_day = {k: sum(d[k] for d in daily if d[k] is not None)/len(daily) for k in daily[0]}
+                daily.extend([avg_day] * (365 - len(daily)))
+                
+            res = registry.cnn_lstm.predict(
+                daily_sequence=daily,
+                system_kw=system_kw,
+                panel_efficiency=panel_eff,
+                tilt_angle=tilt,
+                dust_risk=dust_zone['factor']
+            )
+            
+            # Apply annual degradation if multi-year
+            monthly = res['predicted_monthly']
             if forecast_years > 1:
                 all_years = []
                 for yr in range(forecast_years):
                     factor = (1 - 0.0045) ** yr
                     all_years.append([round(v * factor, 1) for v in monthly])
-                monthly_forecast = all_years
+                res['monthly_forecast'] = all_years
             else:
-                monthly_forecast = monthly
-
-            return {
-                'monthly_forecast':  monthly_forecast,
-                'annual_total_kwh':  annual_total,
-                'model':             'cnn_lstm',
-                'confidence':        round(float(ckpt.get('val_loss', 0.05)) * -1 + 1, 2)
-                                     if 'val_loss' in ckpt else 0.89,
-                'seasonal_pattern': {
-                    'peak_month': months_labels[peak_idx],
-                    'low_month':  months_labels[low_idx],
-                    'peak_kwh':   monthly[peak_idx],
-                    'low_kwh':    monthly[low_idx],
-                },
-                'model_r2':   float(ckpt.get('val_r2', 0.93)) if 'val_r2' in ckpt else 0.93,
-                'model_mape': float(ckpt.get('val_mape', 4.5)) if 'val_mape' in ckpt else 4.5,
-                'location':   {'id': loc.location_id, 'name': loc.name,
-                               'governorate': loc.governorate.name
-                               if loc.governorate else ''},
-                'dust_zone':  dust_zone['name'],
+                res['monthly_forecast'] = monthly
+                
+            res['annual_total_kwh'] = res.pop('predicted_annual_kwh')
+            res['dust_zone'] = dust_zone['name']
+            res['location'] = {
+                'id': loc.location_id if loc else None, 
+                'name': loc.name if loc else 'Dynamic',
+                'governorate': loc.governorate.name if loc and loc.governorate else ''
             }
-
-        except Exception as exc:
-            logger.warning("CNN-LSTM inference failed, falling back to RF: %s", exc)
+            return res
+            
+        except Exception as e:
+            logger.warning("CNN-LSTM inference failed: %s", e)
             return None

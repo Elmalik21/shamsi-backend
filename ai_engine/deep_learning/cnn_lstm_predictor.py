@@ -187,6 +187,76 @@ class SolarYieldCNNLSTM:
         net = self.get_net()
         return sum(p.numel() for p in net.parameters() if p.requires_grad)
 
+    def predict(
+        self,
+        daily_sequence: List[Dict[str, float]],
+        system_kw: float = 10.0,
+        panel_efficiency: float = 0.22,
+        tilt_angle: float = 30.0,
+        dust_risk: float = 0.05,
+    ) -> Dict:
+        """
+        Run inference using the PyTorch CNN-LSTM net and apply physics corrections.
+        """
+        import torch
+        import numpy as np
+
+        net = self.get_net()
+        net.eval()
+
+        if len(daily_sequence) < self.sequence_length:
+            raise ValueError(f"Expected {self.sequence_length} daily records, got {len(daily_sequence)}")
+
+        rows_for_tensor = []
+        for day in daily_sequence[:self.sequence_length]:
+            ghi = float(day.get('allsky_sfc_sw_dwn') or 0.0)
+            temp = float(day.get('t2m') or 0.0)
+            hum = float(day.get('rh2m') or 0.0)
+            wind = float(day.get('ws2m') or 0.0)
+            dust = float(day.get('dust_risk_score', dust_risk))
+            rows_for_tensor.append([ghi, temp, hum, wind, dust])
+
+        seq_np = np.array(rows_for_tensor, dtype=np.float32)
+        x = torch.tensor(seq_np).unsqueeze(0)  # (1, 365, 5)
+
+        if self._device:
+            x = x.to(self._device)
+
+        with torch.no_grad():
+            out = net(x)
+
+        monthly = out[0].cpu().numpy()  # (12,)
+
+        # Physics Corrections (Aligns CNN-LSTM with V2 engineering logic)
+        eff_factor = panel_efficiency / 0.20
+        tilt_factor = 1.0
+        if tilt_angle < 15:
+            tilt_factor = 0.95
+        elif tilt_angle > 45:
+            tilt_factor = 0.90
+
+        system_kw = max(0.1, system_kw)
+
+        final_monthly = [round(float(m) * system_kw * eff_factor * tilt_factor, 1) for m in monthly]
+        final_annual = round(sum(final_monthly), 1)
+
+        months_labels = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec']
+        peak_idx = int(np.argmax(final_monthly))
+        low_idx  = int(np.argmin(final_monthly))
+
+        return {
+            'predicted_annual_kwh': final_annual,
+            'predicted_monthly': final_monthly,
+            'model': 'cnn_lstm',
+            'confidence': 0.95,
+            'seasonal_pattern': {
+                'peak_month': months_labels[peak_idx],
+                'low_month':  months_labels[low_idx],
+                'peak_kwh':   final_monthly[peak_idx],
+                'low_kwh':    final_monthly[low_idx],
+            },
+        }
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Trainer

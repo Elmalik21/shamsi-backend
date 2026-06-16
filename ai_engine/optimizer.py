@@ -54,9 +54,9 @@ class EgyptianSolarOptimizer:
             self.yield_predictor = registry.yield_predictor
             self.dust_clusterer  = registry.dust_clusterer
         except Exception:
-            from ai_engine.yield_predictor import EgyptianYieldPredictor
+            from ai_engine.yield_predictor_v2 import EgyptianYieldPredictorV2
             from ai_engine.dust_clustering import EgyptianDustClusterer
-            self.yield_predictor = EgyptianYieldPredictor()
+            self.yield_predictor = EgyptianYieldPredictorV2()
             self.dust_clusterer  = EgyptianDustClusterer()
 
     # ── Objective functions ───────────────────────────────────────────────────
@@ -96,8 +96,7 @@ class EgyptianSolarOptimizer:
                         'tilt_angle':       tilt,
                         'panel_efficiency': panel.efficiency_pct / 100.0,
                         'temp_coefficient': panel.temp_coefficient_pct,
-                        'system_kw':        1.0,   # specific_yield per kWp
-                    })
+                    }, system_kw=1.0)
                     # predicted_annual_kwh for 1 kWp = specific_yield
                     cache[key] = result['predicted_annual_kwh']
                 except Exception:
@@ -660,8 +659,7 @@ class EgyptianSolarOptimizer:
                 'tilt_angle':        tilt,
                 'panel_efficiency':  panel.efficiency_pct / 100.0,
                 'temp_coefficient':  panel.temp_coefficient_pct,
-                'system_kw':         sys_kw,
-            })
+            }, system_kw=sys_kw)
 
             # Performance ratio: PR = annual_yield / (system_kWp × GHI_annual)
             # where GHI_annual = avg_ghi (kWh/m²/day) × 365

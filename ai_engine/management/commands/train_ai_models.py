@@ -28,6 +28,14 @@ class Command(BaseCommand):
             help='Skip Random Forest yield predictor training',
         )
         parser.add_argument(
+            '--train-cnn', action='store_true',
+            help='Train the CNN-LSTM deep learning predictor',
+        )
+        parser.add_argument(
+            '--skip-yield', action='store_true',
+            help='Skip Random Forest yield predictor training',
+        )
+        parser.add_argument(
             '--force', action='store_true',
             help='Retrain even if model files already exist (default: skip when file is large enough)',
         )
@@ -108,8 +116,8 @@ class Command(BaseCommand):
                 self.stdout.write('\n[2/2] Training Random Forest Yield Predictor (Model 1)...')
                 t0 = time.time()
                 try:
-                    from ai_engine.yield_predictor import EgyptianYieldPredictor
-                    predictor = EgyptianYieldPredictor()
+                    from ai_engine.yield_predictor_v2 import EgyptianYieldPredictorV2
+                    predictor = EgyptianYieldPredictorV2()
                     metrics = predictor.train_and_save()
                     elapsed = round(time.time() - t0, 2)
 
@@ -136,15 +144,14 @@ class Command(BaseCommand):
                         self.stdout.write(f'    {feat:25s}: {val:.4f}')
 
                     # Verify model loads and predicts correctly
-                    p2 = EgyptianYieldPredictor()
+                    p2 = EgyptianYieldPredictorV2()
                     test_pred = p2.predict({
                         'avg_ghi': 6.2, 'avg_temperature': 28.0,
                         'max_temperature': 40.0, 'avg_humidity': 35.0,
                         'avg_wind_speed': 3.5, 'dust_risk_score': 0.07,
                         'latitude': 30.0, 'tilt_angle': 30.0,
-                        'panel_efficiency': 0.23, 'temp_coefficient': -0.30,
-                        'system_kw': 10.0,   # used as multiplier, not feature
-                    })
+                        'temp_coefficient': -0.30,
+                    }, system_kw=10.0)
                     kwh = test_pred['predicted_annual_kwh']
                     self.stdout.write(
                         f'  Verify: 10 kW system in Cairo → {kwh:,.0f} kWh/yr '
@@ -159,6 +166,48 @@ class Command(BaseCommand):
                     self.stdout.write(self.style.ERROR(f'  Yield predictor FAILED: {e}'))
         else:
             self.stdout.write('  [skip] Yield predictor skipped.')
+
+        # ── Step 3: CNN-LSTM Deep Learning Predictor ──────────────────────────
+        cnn_path = os.path.join(models_dir, 'cnn_lstm_best.pth')
+        cnn_exists = os.path.exists(cnn_path)
+        
+        if options.get('train_cnn'):
+            self.stdout.write('\n[3/3] Training CNN-LSTM Predictor (Deep Learning)...')
+            try:
+                import torch
+                from ai_engine.deep_learning.cnn_lstm_predictor import SolarYieldCNNLSTM, CNNLSTMTrainer
+                from ai_engine.deep_learning.dataset import get_dataloaders
+                
+                self.stdout.write('  Preparing dataloaders (this might take a moment)...')
+                train_loader, val_loader, test_loader = get_dataloaders(batch_size=32)
+                
+                model = SolarYieldCNNLSTM()
+                trainer = CNNLSTMTrainer(model=model, save_dir=models_dir, patience=10)
+                
+                self.stdout.write('  Starting PyTorch training loop...')
+                t0 = time.time()
+                history = trainer.fit(train_loader, val_loader, epochs=50, use_gpu=True)
+                elapsed = round(time.time() - t0, 2)
+                
+                self.stdout.write(self.style.SUCCESS(f'  CNN-LSTM trained in {elapsed}s'))
+                self.stdout.write(f"  Best Val Loss: {history['best_val_loss']:.4f}")
+                
+                self.stdout.write('  Evaluating on Test Set...')
+                metrics = trainer.evaluate(test_loader)
+                
+            except ImportError as e:
+                self.stdout.write(self.style.ERROR(f'  CNN-LSTM skipped: {e} (PyTorch missing?)'))
+            except Exception as e:
+                self.stdout.write(self.style.ERROR(f'  CNN-LSTM FAILED: {e}'))
+        else:
+            if cnn_exists:
+                self.stdout.write(self.style.SUCCESS(
+                    f'\n[3/3] ✅ CNN-LSTM already exists '
+                    f'({os.path.getsize(cnn_path) // 1024} KB). '
+                    f'Pass --train-cnn to retrain.'
+                ))
+            else:
+                self.stdout.write('\n[3/3] ⚠️ CNN-LSTM not trained. Pass --train-cnn to train it.')
 
         self.stdout.write(self.style.SUCCESS('\n' + '=' * 60))
         self.stdout.write(self.style.SUCCESS(
