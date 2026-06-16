@@ -468,11 +468,15 @@ class EgyptianYieldPredictorV2:
         if not os.path.exists(self._model_path):
             return False
         import joblib
-        data = joblib.load(self._model_path)
-        self.model   = data['model']
-        self.scaler  = data['scaler']
-        self._metrics = data.get('metrics', {})
-        return True
+        try:
+            data = joblib.load(self._model_path)
+            self.model   = data['model']
+            self.scaler  = data['scaler']
+            self._metrics = data.get('metrics', {})
+            return True
+        except Exception as e:
+            logger.error("Failed to load yield predictor V2 model: %s", e)
+            return False
 
     def predict(self, features: dict, system_kw: float = 10.0) -> dict:
         """
@@ -524,10 +528,10 @@ class EgyptianYieldPredictorV2:
         ghi       = features.get('avg_ghi', 5.5)
         temp      = features.get('avg_temperature', 25.0)
         dust      = features.get('dust_risk_score', 0.07)
-        eff       = features.get('panel_efficiency', 0.22)
         temp_c    = features.get('temp_coefficient', -0.32)
         temp_loss = max(0.0, (temp - 25) * abs(temp_c) * 0.01)
-        specific  = ghi * 365 * eff * (1 - temp_loss) * (1 - dust)
+        # Specific yield (kWh/kWp) does not depend on panel efficiency.
+        specific  = ghi * 365 * (1 - temp_loss) * (1 - dust) * 0.86
         annual    = specific * system_kw
         monthly   = [round(annual * w, 1) for w in self._MONTHLY_WEIGHTS]
         return {

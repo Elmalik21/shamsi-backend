@@ -53,6 +53,16 @@ class EgyptianSolarOptimizer:
             from ai_engine.model_registry import registry
             self.yield_predictor = registry.yield_predictor
             self.dust_clusterer  = registry.dust_clusterer
+            
+            # If registry failed to load the model (e.g. numpy version mismatch), fallback
+            if self.yield_predictor is None:
+                from ai_engine.yield_predictor_v2 import EgyptianYieldPredictorV2
+                self.yield_predictor = EgyptianYieldPredictorV2()
+                
+            if self.dust_clusterer is None:
+                from ai_engine.dust_clustering import EgyptianDustClusterer
+                self.dust_clusterer = EgyptianDustClusterer()
+                
         except Exception:
             from ai_engine.yield_predictor_v2 import EgyptianYieldPredictorV2
             from ai_engine.dust_clustering import EgyptianDustClusterer
@@ -148,7 +158,8 @@ class EgyptianSolarOptimizer:
             d  = context['dust_zone']['factor']
             tc = panel.temp_coefficient_pct
             tl = max(0.0, (c['avg_temperature'] - 25) * abs(tc) * 0.01)
-            specific_yield = c['avg_ghi'] * 365 * (panel.efficiency_pct / 100.0) * (1 - tl) * (1 - d)
+            # PR = (1 - temp_loss) * (1 - dust_loss) * (1 - other_system_losses). Let's assume other system losses ~ 14% (so we multiply by 0.86)
+            specific_yield = c['avg_ghi'] * 365 * (1 - tl) * (1 - d) * 0.86
 
         base_yield   = specific_yield * sys_kw
         shading_loss = context['site']['shading_loss_pct'] / 100.0
