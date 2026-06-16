@@ -31,6 +31,14 @@ from __future__ import annotations
 import logging
 import threading
 import os
+import warnings
+
+try:
+    from sklearn.exceptions import InconsistentVersionWarning
+    warnings.filterwarnings("ignore", category=InconsistentVersionWarning)
+except ImportError:
+    pass
+
 from django.conf import settings
 
 logger = logging.getLogger(__name__)
@@ -95,7 +103,7 @@ class _ModelRegistry:
             device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
             net_wrapper = SolarYieldCNNLSTM()
             net = net_wrapper.get_net(device)
-            ckpt = torch.load(model_path, map_location=device)
+            ckpt = torch.load(model_path, map_location=device, weights_only=False)
             
             # Support both direct state_dict (from Kaggle script) and wrapped state_dict
             if 'state_dict' in ckpt:
