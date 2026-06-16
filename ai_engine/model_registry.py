@@ -96,7 +96,13 @@ class _ModelRegistry:
             net_wrapper = SolarYieldCNNLSTM()
             net = net_wrapper.get_net(device)
             ckpt = torch.load(model_path, map_location=device)
-            net.load_state_dict(ckpt['state_dict'])
+            
+            # Support both direct state_dict (from Kaggle script) and wrapped state_dict
+            if 'state_dict' in ckpt:
+                net.load_state_dict(ckpt['state_dict'])
+            else:
+                net.load_state_dict(ckpt)
+                
             net.eval()
             
             self.cnn_lstm = net_wrapper

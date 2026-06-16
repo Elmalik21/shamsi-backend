@@ -436,8 +436,12 @@ class CNNLSTMTrainer:
         ckpt_path = checkpoint_path or os.path.join(self.save_dir, 'cnn_lstm_best.pth')
         if os.path.exists(ckpt_path):
             ckpt = torch.load(ckpt_path, map_location=device)
-            net.load_state_dict(ckpt['state_dict'])
-            logger.info("Loaded checkpoint from %s (epoch %d)", ckpt_path, ckpt['epoch'])
+            if 'state_dict' in ckpt:
+                net.load_state_dict(ckpt['state_dict'])
+                logger.info("Loaded checkpoint from %s (epoch %d)", ckpt_path, ckpt.get('epoch', 0))
+            else:
+                net.load_state_dict(ckpt)
+                logger.info("Loaded checkpoint from %s (direct state dict)", ckpt_path)
 
         net.eval()
         all_preds, all_targets = [], []
