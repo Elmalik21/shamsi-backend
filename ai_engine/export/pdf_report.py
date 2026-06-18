@@ -522,8 +522,18 @@ def _extract_results(project_data: dict) -> dict:
     lifetime_sav   = _pick('lifetime_savings_egp', 'savings_25yr_egp')
     panel_count    = int(_pick('panel_count', 'num_panels', default=0))
     system_kw      = _pick('system_kw', 'system_kwp', 'capacity_kw')
+
+    if specific_yield == 0 and system_kw and annual_kwh:
+        specific_yield = annual_kwh / float(system_kw)
     perf_ratio     = _pick('performance_ratio', 'pr')
     cost_per_w     = _pick('cost_per_watt', 'cost_per_wp')
+    
+    if cost_per_w == 0 and total_cost and system_kw:
+        cost_per_w = total_cost / (float(system_kw) * 1000.0)
+        
+    if lifetime_sav == 0 and annual_savings:
+        lifetime_sav = annual_savings * 25
+        
     panel_id       = sol.get('panel_id') or opt.get('panel_id')
     inverter_id    = sol.get('inverter_id') or opt.get('inverter_id')
     dust_loss      = _pick('dust_loss_pct', default=5.0)
