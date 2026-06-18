@@ -51,8 +51,10 @@ try:
     )
     from reportlab.pdfgen               import canvas as rl_canvas
     REPORTLAB_AVAILABLE = True
-except ImportError:
+    REPORTLAB_ERROR = None
+except ImportError as e:
     REPORTLAB_AVAILABLE = False
+    REPORTLAB_ERROR = str(e)
 
 # ── Matplotlib ───────────────────────────────────────────────────────────────
 try:
@@ -598,9 +600,7 @@ class ProfessionalPDFReport:
 
     def generate_report(self, output_file: str) -> str:
         if not REPORTLAB_AVAILABLE:
-            raise ImportError(
-                'reportlab is required. Install: pip install reportlab matplotlib'
-            )
+            raise ImportError(f"reportlab not installed or failed to import. Detail: {REPORTLAB_ERROR}")
 
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
