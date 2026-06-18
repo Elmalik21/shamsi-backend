@@ -315,7 +315,25 @@ def export_pdf(request: Request, project_id: str) -> Response:
             logger.info("PDF export project %s: using live ai_result from POST "
                         "(%d pareto solutions)", project_id, len(pareto))
 
-        # Form overrides for system_config
+            if pareto:
+                sol = pareto[0]
+                # Override panel if sol has it
+                if sol.get('panel_name'):
+                    if hasattr(project.get('panel'), 'model'):
+                        project['panel'].model = sol['panel_name']
+                        project['panel'].manufacturer = ''
+                    if hasattr(project.get('panel'), 'power_rating_w'):
+                        project['panel'].power_rating_w = sol.get('panel_power_w', 580)
+                
+                # Override inverter if sol has it
+                if sol.get('inverter_name'):
+                    if hasattr(project.get('inverter'), 'model'):
+                        project['inverter'].model = sol['inverter_name']
+                        project['inverter'].manufacturer = ''
+                    if hasattr(project.get('inverter'), 'power_rating_w'):
+                        project['inverter'].power_rating_w = sol.get('inverter_power_w', 10000)
+
+        # Form overrides for system_config and location
         form_data = body.get('form', {})
         if form_data:
             cfg = project.get('system_config', {})
@@ -324,6 +342,14 @@ def export_pdf(request: Request, project_id: str) -> Response:
             if form_data.get('azimuth'):
                 cfg['azimuth'] = float(form_data['azimuth'])
             project['system_config'] = cfg
+
+            loc_name = form_data.get('location_name')
+            if loc_name:
+                loc = project.get('location')
+                if isinstance(loc, dict):
+                    loc['name'] = loc_name
+                elif hasattr(loc, 'name'):
+                    loc.name = loc_name
 
     try:
         from ai_engine.export.pdf_report import ProfessionalPDFReport

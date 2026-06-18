@@ -69,21 +69,21 @@ except ImportError:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Strict B&W Colour Palette
+# Simple Professional Colour Palette
 # ─────────────────────────────────────────────────────────────────────────────
 C_BLACK      = '#000000'
-C_DARK       = '#1a1a1a'
-C_HEADING    = '#000000'
-C_BODY       = '#222222'
-C_MUTED      = '#555555'
-C_LIGHT_MUTED= '#888888'
-C_ROW_EVEN   = '#f4f4f4'
+C_DARK       = '#111111'
+C_HEADING    = '#1d4e89'  # Navy Blue
+C_BODY       = '#333333'
+C_MUTED      = '#666666'
+C_LIGHT_MUTED= '#999999'
+C_ROW_EVEN   = '#f8fafd'  # Light Blue Tint
 C_ROW_ODD    = '#ffffff'
-C_HEADER_BG  = '#000000'
+C_HEADER_BG  = '#1d4e89'  # Navy Blue
 C_HEADER_FG  = '#ffffff'
-C_BORDER     = '#000000'
-C_RULE       = '#222222'
-C_DIVIDER    = '#cccccc'
+C_BORDER     = '#cccccc'
+C_RULE       = '#f79256'  # Orange Accent
+C_DIVIDER    = '#eeeeee'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -105,8 +105,10 @@ def _monthly_production_chart(monthly_kwh: List[float]) -> io.BytesIO:
               'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
     fig, ax = plt.subplots(figsize=(10, 4))
 
+    # Color summer months (May-Aug) orange, rest navy blue
+    colors = ['#1d4e89']*4 + ['#f79256']*4 + ['#1d4e89']*4
     bars = ax.bar(months, monthly_kwh,
-                  color='#333333', edgecolor='black', linewidth=0.8, hatch='////')
+                  color=colors, edgecolor='black', linewidth=0.5, alpha=0.9)
 
     # Value labels on bars
     for bar, val in zip(bars, monthly_kwh):
@@ -151,10 +153,9 @@ def _cashflow_chart(annual_kwh: float, total_cost: float,
     fig, ax = plt.subplots(figsize=(10, 4))
 
     for i, (yr, val) in enumerate(zip(yrs, cumulative)):
-        color  = '#666666' if val < 0 else '#1a1a1a'
-        hatch  = '\\\\\\\\' if val < 0 else ''
+        color  = '#d9534f' if val < 0 else '#5cb85c' # Red for negative, Green for positive
         ax.bar(yr, val, color=color, edgecolor='black',
-               linewidth=0.8, width=0.75, hatch=hatch)
+               linewidth=0.5, width=0.75, alpha=0.9)
 
     ax.axhline(0, color='#000000', linewidth=1.5)
 
