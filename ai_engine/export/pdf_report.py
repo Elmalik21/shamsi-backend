@@ -47,7 +47,7 @@ try:
         Spacer, Table, TableStyle, HRFlowable,
     )
     from reportlab.graphics.shapes      import (
-        Drawing, Rect, Line, String, Circle, Polygon, Group, Arrow,
+        Drawing, Rect, Line, String, Circle, Polygon, Group
     )
     from reportlab.pdfgen               import canvas as rl_canvas
     REPORTLAB_AVAILABLE = True
