@@ -87,9 +87,7 @@ def _load_project(project_id: str, request: Request) -> dict | None:
         return _synthetic_project(request)
 
     try:
-        # Lazy import to avoid circular imports
-        from api.models import DesignProject        # noqa: PLC0415
-        from solar_data.models import DailyClimateData  # noqa: PLC0415
+        from solar_data.models import DesignProject, DailyClimateData  # noqa: PLC0415
 
         project = DesignProject.objects.select_related(
             'location', 'panel', 'inverter'
@@ -101,13 +99,43 @@ def _load_project(project_id: str, request: Request) -> dict | None:
 
         opt = project.optimization_results or {}
 
+        panel = project.panel
+        inverter = project.inverter
+
+        if not panel and opt.get('pareto_solutions'):
+            sol = opt['pareto_solutions'][0]
+            if sol.get('panel_id'):
+                from solar_data.models import Equipment
+                panel = Equipment.objects.filter(pk=sol['panel_id']).first()
+
+        if not inverter and opt.get('pareto_solutions'):
+            sol = opt['pareto_solutions'][0]
+            if sol.get('inverter_id'):
+                from solar_data.models import Equipment
+                inverter = Equipment.objects.filter(pk=sol['inverter_id']).first()
+
+        panel_count = getattr(project, 'panel_count', None)
+        if not panel_count and opt.get('pareto_solutions'):
+            panel_count = opt['pareto_solutions'][0].get('panel_count')
+        if not panel_count:
+            panel_count = 30
+
+        # Build company dict from query params
+        company = {
+            'name'           : request.query_params.get('company_name', ''),
+            'address'        : request.query_params.get('company_address', ''),
+            'phone'          : request.query_params.get('company_phone', ''),
+            'email'          : request.query_params.get('company_email', ''),
+            'egypteraLicense': request.query_params.get('company_egyptera', ''),
+        }
+
         return {
             'project_id'          : str(project.pk),
             'location'            : project.location,
-            'panel'               : project.panel,
-            'inverter'            : project.inverter,
+            'panel'               : panel,
+            'inverter'            : inverter,
             'system_config'       : {
-                'panel_count'       : project.panel_count or 30,
+                'panel_count'       : panel_count,
                 'tilt_angle'        : float(request.query_params.get(
                                           'tilt_angle',
                                           getattr(project, 'tilt_angle', 20))),
@@ -122,7 +150,10 @@ def _load_project(project_id: str, request: Request) -> dict | None:
             'dust_loss_pct'       : float(getattr(project, 'dust_loss_pct', 5.0)),
             'shading_loss_pct'    : float(getattr(project, 'shading_loss_pct', 3.0)),
             'optimization_results': opt,
+            # Also expose pareto solutions at top-level for the PDF engine
+            'pareto_solutions'    : opt.get('pareto_solutions', []),
             'roof_image_path'     : getattr(project, 'annotated_roof_image_path', None),
+            'company'             : company,
         }
 
     except Exception as exc:                        # noqa: BLE001
@@ -244,32 +275,72 @@ def export_helioscope(request: Request, project_id: str) -> Response:
 # PDF export
 # ─────────────────────────────────────────────────────────────────────────────
 
-@api_view(['GET'])
+@api_view(['GET', 'POST'])
 def export_pdf(request: Request, project_id: str) -> Response:
     """
-    GET /api/v1/export/{project_id}/pdf/
+    GET or POST /api/v1/export/{project_id}/pdf/
 
-    Returns a professional PDF report.
+    On POST: accepts JSON body with:
+      ai_result  — the full AI result object from the frontend (pareto_solutions, etc.)
+      form       — form params (tilt_angle, azimuth, ...)
+      company_*  — company branding fields
     """
     project = _load_project(project_id, request)
     if project is None:
         return Response({'error': 'Project not found.'},
                         status=status.HTTP_404_NOT_FOUND)
 
+    # ── Merge live POST payload (always wins over DB data) ─────────────────
+    if request.method == 'POST' and request.data:
+        body = request.data
+
+        # Company info from POST body
+        company_override = {}
+        for key in ('company_name', 'company_address', 'company_phone',
+                    'company_email', 'company_egyptera'):
+            val = body.get(key, '')
+            if val:
+                short = key.replace('company_', '')
+                company_override[short if short != 'egyptera' else 'egypteraLicense'] = val
+        if company_override:
+            project['company'] = {**project.get('company', {}), **company_override}
+
+        # Live AI result from frontend overrides everything
+        ai_result = body.get('ai_result')
+        if ai_result and isinstance(ai_result, dict):
+            # Merge pareto_solutions at top level for _extract_results()
+            pareto = (ai_result.get('pareto_solutions') or [])
+            project['pareto_solutions']     = pareto
+            project['optimization_results'] = ai_result
+            logger.info("PDF export project %s: using live ai_result from POST "
+                        "(%d pareto solutions)", project_id, len(pareto))
+
+        # Form overrides for system_config
+        form_data = body.get('form', {})
+        if form_data:
+            cfg = project.get('system_config', {})
+            if form_data.get('tilt_angle'):
+                cfg['tilt_angle'] = float(form_data['tilt_angle'])
+            if form_data.get('azimuth'):
+                cfg['azimuth'] = float(form_data['azimuth'])
+            project['system_config'] = cfg
+
     try:
         from ai_engine.export.pdf_report import ProfessionalPDFReport
 
         out_dir  = _export_dir(project_id)
-        loc_safe = project['location'].name.replace(' ', '_')
+        loc      = project.get('location')
+        loc_name = getattr(loc, 'name', None) or (loc.get('name') if isinstance(loc, dict) else None) or 'Report'
+        loc_safe = loc_name.replace(' ', '_')
         out_path = os.path.join(out_dir, f'Shamsi_{loc_safe}_Report.pdf')
 
         report = ProfessionalPDFReport(project)
         report.generate_report(out_path)
 
-        response = HttpResponse(
-            open(out_path, 'rb').read(),
-            content_type='application/pdf',
-        )
+        with open(out_path, 'rb') as f:
+            pdf_bytes = f.read()
+
+        response = HttpResponse(pdf_bytes, content_type='application/pdf')
         response['Content-Disposition'] = (
             f'attachment; filename="Shamsi_{loc_safe}_Report.pdf"'
         )
