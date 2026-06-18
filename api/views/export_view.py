@@ -355,9 +355,13 @@ def export_pdf(request: Request, project_id: str) -> Response:
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
     except Exception as exc:
+        import traceback
+        tb = traceback.format_exc()
         logger.exception("PDF export failed for project %s", project_id)
-        return Response({'error': str(exc)},
-                        status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        return Response({
+            'error': str(exc),
+            'traceback': tb
+        }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
