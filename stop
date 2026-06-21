@@ -1,0 +1,82 @@
+[33m0e2c1aa[m[33m ([m[1;36mHEAD -> [m[1;32mmain[m[33m, [m[1;31morigin/main[m[33m, [m[1;31morigin/HEAD[m[33m)[m Merge pull request #2 from Elmalik21/sandbox/6d9d0a5b-f89c-465d-bae2--robm
+[33m280d9ff[m Increase NSGA-II timeout from 22s to 40s
+[33m3c01cce[m Increase NSGA-II timeout from 22s to 40s
+[33mefcc79c[m Merge pull request #1 from Elmalik21/ahmedelshkh
+[33m8f68681[m[33m ([m[1;31morigin/ahmedelshkh[m[33m, [m[1;32mahmedelshkh[m[33m)[m add missing data
+[33m9740dc7[m cors
+[33m6436d17[m fix: calculate specific_yield and cost_per_watt fallbacks
+[33ma0fcfaa[m feat: colorize pdf report and override synthetic project payload
+[33mdecaa5e[m fix: remove non-existent Arrow import from reportlab
+[33m15aeb40[m fix: capture detailed reportlab error
+[33ma40d47d[m add reportlab and matplotlib to requirements
+[33m2d34cd7[m pdf
+[33m6de7021[m LOG-cleanning
+[33m9398d5e[m op-dust-fixss
+[33mea49417[m yeld-op
+[33mec2aedb[m GMM
+[33m689361f[m Upgrade AttentionPool to Learned Query Token to match Kaggle model
+[33m55bf9de[m Fix CNN architecture to match Kaggle model
+[33m2ec7b73[m Merge branch 'main' of https://github.com/Elmalik21/shamsi-backend
+[33m4c925ca[m op-opp
+[33m0da53f0[m cnn_lstm_best-op
+[33m8093423[m op-op
+[33meffb099[m Fix float(None) TypeError in CNN-LSTM predictor
+[33m4fc27dc[m Fix CNN-LSTM fallback: change daily_data to climate_data
+[33mb593eb0[m Fix PredictYield 500 error and add NASA fallback for CNN-LSTM
+[33m8863aff[m Fix duplicate argparse & add NASA cache
+[33mc500847[m op-cnn0lss
+[33m20e476b[m smoke
+[33m015acc3[m endpoints-y-fix
+[33m16c255d[m mod
+[33m7b0d335[m models-fixs
+[33m157fb0c[m fix: AI endpoints 500 errors - add models, fix paths, add status endpoint
+[33md5974e6[m Fix: Railway 500 error - populate api/views/__init__.py
+[33m14a9af4[m Fix: PyTorch version for Railway
+[33mceb2743[m Fix: NSGA-II timeout, add torch/ultralytics to deps, pin sklearn==1.6.1, improve model load logging
+[33m88a70e0[m deplyfix
+[33mbe7175f[m Add trained models from Kaggle GPU
+[33m17a7707[m ai-engin-lats eddition
+[33m6addf10[m fix: add ai_engine to INSTALLED_APPS so train_ai_models works, fix favicon 500, flatten recommendation_reason
+[33ma06290f[m fix: flatten recommendation_reason to string, inverter electrical fields, DSS integration, train_ai_models on deploy
+[33meb08924[m fix: IEC 62109 electrical fields, DesignTool JSX build fix, DSS integration, ROI endpoint
+[33m2a40f80[m feat: add user registration endpoint with token response
+[33mf353df8[m feat: full dynamic admin dashboard + create_admin command
+[33m2736e0d[m fix: remove non-existent model fields from import_solar_data command
+[33m6742f76[m data: add climate CSV + auto-import on first deploy
+[33m90e8e9a[m seed: add seed_locations command + auto-seed on deploy
+[33m582f05d[m fix: rewrite production.py without decouple/drf_yasg, point all to settings.production
+[33m4461170[m fix: move DATABASES definition to top of settings before any other imports
+[33m2dfa968[m debug: test settings import in railway.json startCommand
+[33m623ee9c[m debug: force cache bust, test settings import directly before migrate
+[33m323c2d8[m fix: remove decouple, use os.environ directly, add early debug print
+[33ma625621[m fix: force DJANGO_SETTINGS_MODULE in manage.py, add debug prints
+[33m7e14320[m fix: parse DATABASE_URL manually with urllib, add debug print
+[33m2e010ad[m fix: use dj_database_url.parse() directly, fallback to DATABASE_PUBLIC_URL
+[33m7980a2c[m fix: robust DATABASE_URL handling with SQLite fallback
+[33m5a79e2f[m fix: move collectstatic to start command, bypass broken build phase
+[33mabceb6a[m fix: BASE_DIR was 3 levels up instead of 2 (collectstatic unknown command)
+[33mbcaf2c0[m fix: force DJANGO_SETTINGS_MODULE=shamsi_smart.settings in build and start commands
+[33me46e04a[m fix: point manage.py and wsgi.py to correct settings module
+[33m7db478b[m fix: remove drf-yasg (pkg_resources missing in Python 3.12 Nix venv)
+[33m6f3da7c[m fix: add setuptools for drf-yasg pkg_resources on Python 3.12
+[33m34a7e31[m fix: remove invalid libpq nix package (included in postgresql)
+[33mcb59d37[m fix: full integration audit - keep local fixes
+[33ma76f0f5[m fix: full integration audit
+[33m371001f[m Update settings.py
+[33m94302eb[m Update railway.json
+[33m8bc37c6[m Update settings.py
+[33m7efff86[m Update settings.py
+[33m5d745cf[m Update railway.json
+[33m358b6c5[m Update .env
+[33m23f97fb[m Update settings.py
+[33m0d9ea57[m Create .env
+[33mc6df343[m Update .env.example
+[33m7ae2049[m Update .env.example
+[33mcfc7a6a[m Update settings.py
+[33me998dd5[m Update settings.py
+[33mca6d471[m Update settings.py
+[33m66ac2e4[m Update nixpacks.toml
+[33m5c24fb1[m Update settings.py
+[33maac5cc8[m Update nixpacks.toml
+[33m11882bc[m Update nixpacks.toml
+[33ma8b974d[m Initial commit: Shamsi Smart Backend — Django 5.1.7 + AI Engine + Railway config

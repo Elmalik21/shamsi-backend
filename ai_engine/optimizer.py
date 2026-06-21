@@ -44,7 +44,7 @@ class EgyptianSolarOptimizer:
     TOURNAMENT_SIZE = 2
 
     # Hard wall: never exceed this total wall-clock time (Railway 30s timeout)
-    MAX_WALL_SECONDS = 22.0
+    MAX_WALL_SECONDS = 40
 
     def __init__(self):
         # Use Model Registry singleton if available (loaded at startup)
