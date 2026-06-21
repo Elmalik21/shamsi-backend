@@ -444,7 +444,13 @@ class DesignProjectViewSet(viewsets.ModelViewSet):
 
 class SelectDesignView(APIView):
     permission_classes = [IsAuthenticated]
+    def post(self, request, pk):
+        return self._select(request, pk)
+
     def patch(self, request, pk):
+        return self._select(request, pk)
+
+    def _select(self, request, pk):
         try:
             project = DesignProject.objects.get(project_id=pk, user=request.user)
         except DesignProject.DoesNotExist:

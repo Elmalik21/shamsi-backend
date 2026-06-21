@@ -244,18 +244,20 @@ class InstallationCostSerializer(serializers.ModelSerializer):
 
 
 class DesignProjectSerializer(serializers.ModelSerializer):
+    id = serializers.UUIDField(source='project_id', read_only=True)
+    name = serializers.CharField(source='client_name', read_only=True)
+
     class Meta:
         model = DesignProject
         fields = [
-            'project_id', 'client_name', 'location', 'available_area_m2',
+            'id', 'project_id', 'name', 'client_name', 'location', 'available_area_m2',
             'monthly_consumption_kwh', 'usage_type', 'budget_egp',
             'shading_loss_pct', 'include_battery', 'status',
             'optimization_run_id', 'pareto_solutions', 'selected_design',
             'created_at', 'updated_at',
         ]
         read_only_fields = [
-            'project_id', 'status', 'optimization_run_id',
-            'pareto_solutions', 'selected_design',
+            'project_id',
             'created_at', 'updated_at',
         ]
 
