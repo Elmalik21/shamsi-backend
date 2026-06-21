@@ -43,7 +43,7 @@ class EgyptianSolarOptimizer:
     MUTATION_PROB   = 0.3
     TOURNAMENT_SIZE = 2
 
-    # Hard wall: never exceed this total wall-clock time (Railway 30s timeout)
+    # Hard wall: never exceed this total wall-clock time (Railway 60s timeout)
     MAX_WALL_SECONDS = 40.0
 
     def __init__(self):
@@ -463,7 +463,7 @@ class EgyptianSolarOptimizer:
         Improvements vs original:
           1. Yield cache: RF called ~55× instead of 600+  (10-20× faster)
           2. Adaptive pop/gen: scaled to search space size
-          3. Timeout guard: stops early if approaching Railway 30s limit
+          3. Timeout guard: stops early if approaching Railway 60s limit
           4. Soft dust membership: weighted dust factor, not hard cluster
 
         Args
@@ -543,166 +543,41 @@ class EgyptianSolarOptimizer:
             for front in combined_fronts:
                 combined_cd.update(self._crowding_distance(front, combined))
 
-            new_pop = []
-            for front in combined_fronts:
-                if len(new_pop) + len(front) <= pop_size:
-                    new_pop.extend([combined[i] for i in front])
-                else:
-                    remaining = pop_size - len(new_pop)
-                    sorted_front = sorted(front, key=lambda i: combined_cd.get(i, 0), reverse=True)
-                    new_pop.extend([combined[i] for i in sorted_front[:remaining]])
-                    break
-            pop = new_pop
+            # Select best pop_size individuals from combined
+            all_indices = list(range(len(combined)))
+            all_indices.sort(
+                key=lambda i: (
+                    combined_fronts[0].index(i) if i in combined_fronts[0] else 999,
+                    -combined_cd.get(i, 0.0),
+                ),
+            )
+            pop = [combined[i] for i in all_indices[:pop_size]]
 
         # ── Step 5: Extract Pareto front ──────────────────────────────────────
-        final_fronts = self._non_dominated_sort(pop)
-        pareto = [pop[i] for i in final_fronts[0]] if final_fronts else pop
+        fronts = self._non_dominated_sort(pop)
+        pareto_front = fronts[0] if fronts else list(range(len(pop)))
 
-        selected = self._select_diverse_solutions(pareto, context, n=5)
-
-        elapsed = round(time.time() - start, 2)
+        convergence_sec = round(time.time() - start, 2)
         logger.info(
-            "NSGA-II run %s complete: %.2fs, %d solutions, cache=%d entries, timed_out=%s",
-            run_id, elapsed, len(selected), len(context['yield_cache']), timed_out,
+            "NSGA-II completed: run_id=%s, time=%.2fs, pareto_size=%d, timed_out=%s",
+            run_id, convergence_sec, len(pareto_front), timed_out,
         )
 
         return {
-            'run_id':               run_id,
-            'convergence_time_sec': elapsed,
-            'cache_build_sec':      cache_build_sec,
-            'pareto_solutions':     selected,
-            'dust_zone_info':       context['dust_zone'],
-            'location_info':        context['location'],
-            'timed_out':            timed_out,
-            'generations_run':      gen + 1 if not timed_out else gen,
+            'run_id': run_id,
+            'convergence_time_sec': convergence_sec,
+            'pareto_solutions': [
+                {
+                    'panel_idx': int(pop[i][0]),
+                    'inverter_idx': int(pop[i][1]),
+                    'panel_count': int(pop[i][2]),
+                    'tilt_angle': float(pop[i][3]),
+                    'energy_kwh': float(pop[i].fitness[0]),
+                    'cost_egp': float(pop[i].fitness[1]),
+                    'space_util': float(pop[i].fitness[2]),
+                }
+                for i in pareto_front
+            ],
+            'timed_out': timed_out,
         }
 
-    # ── Solution formatting ───────────────────────────────────────────────────
-
-    def _select_diverse_solutions(self, pareto, context, n: int = 5) -> list:
-        """
-        Select n diverse solutions from Pareto front.
-        Sorts by energy yield descending, picks evenly spaced solutions.
-        Enriches each with financial metrics.
-        """
-        from solar_data.utils import calculate_annual_savings
-
-        # Filter valid solutions only
-        valid = [ind for ind in pareto if ind.fitness and ind.fitness[1] != float('inf')]
-        if not valid:
-            return []
-
-        # Sort by energy descending
-        valid.sort(key=lambda ind: ind.fitness[0], reverse=True)
-
-        # ── Brand-diverse selection ───────────────────────────────────────────
-        # Pick solutions with diverse panel brands so the user sees real choice.
-        # Strategy:
-        #   1. Always include the top-energy solution.
-        #   2. For remaining slots, prefer solutions with panel brands not yet chosen.
-        #   3. If not enough diverse brands, fill remaining slots evenly-spaced.
-        chosen: list = []
-        seen_panel_brands: set = set()
-
-        # Slot 1: best by energy
-        chosen.append(valid[0])
-        seen_panel_brands.add(context['panels'][valid[0][0]].brand)
-
-        # Slots 2-n: prefer unseen brands
-        for ind in valid[1:]:
-            if len(chosen) >= n:
-                break
-            brand = context['panels'][ind[0]].brand
-            if brand not in seen_panel_brands:
-                chosen.append(ind)
-                seen_panel_brands.add(brand)
-
-        # Fill remaining slots if needed (same-brand fallback, evenly spaced)
-        if len(chosen) < n:
-            remaining_valid = [ind for ind in valid if ind not in chosen]
-            still_need      = n - len(chosen)
-            if remaining_valid:
-                step   = max(1, len(remaining_valid) // still_need)
-                extras = [remaining_valid[i * step]
-                          for i in range(still_need)
-                          if i * step < len(remaining_valid)]
-                chosen.extend(extras)
-
-        solutions = []
-        monthly_kwh = float(context['request'].get('monthly_consumption_kwh', 500))
-        usage_type  = context['request'].get('usage_type', 'RESIDENTIAL')
-
-        for rank, ind in enumerate(chosen, start=1):
-            panel    = context['panels'][ind[0]]
-            inverter = context['inverters'][ind[1]]
-            count    = ind[2]
-            tilt     = ind[3]
-            energy   = ind.fitness[0]
-            cost     = ind.fitness[1]
-            space    = ind.fitness[2]
-            sys_kw   = (count * panel.capacity_w) / 1000.0
-
-            savings  = calculate_annual_savings(energy, usage_type, monthly_kwh)
-            annual_saving = savings['annual_savings_egp']
-
-            payback = round(cost / annual_saving, 1) if annual_saving > 0 else 99.0
-
-            # 25-year ROI with 17% tariff escalation, 0.45% degradation
-            roi_25yr = 0.0
-            cum_saving = 0.0
-            s = annual_saving
-            for yr in range(1, 26):
-                s *= (1 + 0.17)            # tariff escalation
-                s *= (1 - 0.0045)          # panel degradation
-                cum_saving += s
-            roi_25yr = round(cum_saving - cost, 0)
-
-            # Monthly production
-            pred    = self.yield_predictor.predict({
-                'avg_ghi':           context['climate']['avg_ghi'],
-                'avg_temperature':   context['climate']['avg_temperature'],
-                'max_temperature':   context['climate']['max_temperature'],
-                'avg_humidity':      context['climate']['avg_humidity'],
-                'avg_wind_speed':    context['climate']['avg_wind_speed'],
-                'dust_risk_score':   context['dust_zone']['factor'],
-                'latitude':          context['location']['latitude'],
-                'tilt_angle':        tilt,
-                'panel_efficiency':  panel.efficiency_pct / 100.0,
-                'temp_coefficient':  panel.temp_coefficient_pct,
-            }, system_kw=sys_kw)
-
-            # Performance ratio: PR = annual_yield / (system_kWp × GHI_annual)
-            # where GHI_annual = avg_ghi (kWh/m²/day) × 365
-            # This replaces the old incorrect constant of 1825.
-            avg_ghi      = context['climate']['avg_ghi']
-            ghi_annual   = avg_ghi * 365          # kWh/m²/yr = "peak sun hours"
-            perf_ratio   = round(energy / (sys_kw * ghi_annual), 3) if (sys_kw > 0 and ghi_annual > 0) else 0.0
-
-            solutions.append({
-                'rank':                   rank,
-                'panel_count':            count,
-                'panel_brand':            panel.brand,
-                'panel_model':            panel.model,
-                'panel_capacity_w':       panel.capacity_w,
-                'panel_type':             panel.panel_type,
-                'panel_efficiency_pct':   panel.efficiency_pct,
-                'inverter_brand':         inverter.brand,
-                'inverter_model':         inverter.model,
-                'inverter_type':          inverter.inverter_type,
-                'inverter_kw':            inverter.capacity_kw,
-                'tilt_angle':             tilt,
-                'system_kw':              round(sys_kw, 2),
-                'annual_yield_kwh':       round(energy, 0),
-                'total_cost_egp':         round(cost, 0),
-                'space_utilisation_pct':  round(space * 100, 1),
-                'payback_years':          payback,
-                'annual_savings_egp':     round(annual_saving, 0),
-                'roi_25yr_egp':           roi_25yr,
-                'monthly_production':     pred['predicted_monthly'],
-                'dust_zone':              context['dust_zone']['name'],
-                'cleaning_interval_days': context['dust_zone']['cleaning_days'],
-                'performance_ratio':      perf_ratio,   # pre-computed, accurate
-                'avg_ghi':               round(avg_ghi, 2),
-            })
-
-        return solutions
