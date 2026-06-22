@@ -71,6 +71,178 @@ def _file_response(path: str, content_type: str,
     return response
 
 
+class SolarPanelWrapper:
+    def __init__(self, panel):
+        self._panel = panel
+
+    def __getattr__(self, name):
+        return getattr(self._panel, name)
+
+    def get(self, name, default=None):
+        return getattr(self, name, default)
+
+    @property
+    def manufacturer(self):
+        return self._panel.brand
+
+    @property
+    def power_rating_w(self):
+        return float(self._panel.capacity_w)
+
+    @property
+    def efficiency_percent(self):
+        return float(self._panel.efficiency_pct)
+
+    @property
+    def temp_coeff_pmax_percent(self):
+        return float(self._panel.temp_coefficient_pct)
+
+    @property
+    def technology(self):
+        return getattr(self._panel, 'panel_type', 'mono-Si')
+
+    @property
+    def vmp_v(self):
+        w = self.power_rating_w
+        if w >= 600: return 45.0
+        elif w >= 500: return 42.0
+        elif w >= 400: return 38.0
+        return 34.0
+
+    @property
+    def imp_a(self):
+        return round(self.power_rating_w / self.vmp_v, 2)
+
+    @property
+    def voc_v(self):
+        return round(self.vmp_v * 1.2, 2)
+
+    @property
+    def isc_a(self):
+        return round(self.imp_a * 1.05, 2)
+
+    @property
+    def temp_coeff_voc_percent(self):
+        return round(self.temp_coeff_pmax_percent * 0.77, 3)
+
+    @property
+    def temp_coeff_isc_percent(self):
+        return 0.045
+
+    @property
+    def length_mm(self):
+        w = self.power_rating_w
+        if w >= 600: return 2300
+        elif w >= 500: return 2200
+        elif w >= 400: return 2000
+        return 1700
+
+    @property
+    def width_mm(self):
+        w = self.power_rating_w
+        if w >= 600: return 1200
+        elif w >= 500: return 1134
+        elif w >= 400: return 1000
+        return 1000
+
+    @property
+    def thickness_mm(self):
+        return 30
+
+    @property
+    def weight_kg(self):
+        w = self.power_rating_w
+        if w >= 600: return 32.0
+        elif w >= 500: return 28.5
+        elif w >= 400: return 22.0
+        return 19.0
+
+    @property
+    def area_m2(self):
+        return (self.length_mm * self.width_mm) / 1e6
+
+    def __str__(self):
+        return str(self._panel)
+
+
+class InverterWrapper:
+    def __init__(self, inverter):
+        self._inverter = inverter
+
+    def __getattr__(self, name):
+        return getattr(self._inverter, name)
+
+    def get(self, name, default=None):
+        return getattr(self, name, default)
+
+    @property
+    def manufacturer(self):
+        return self._inverter.brand
+
+    @property
+    def power_rating_w(self):
+        return float(self._inverter.capacity_kw * 1000.0)
+
+    @property
+    def output_voltage_v(self):
+        return 230.0
+
+    @property
+    def max_ac_power_w(self):
+        return float(self._inverter.capacity_kw * 1000.0 * 1.1)
+
+    @property
+    def max_efficiency_percent(self):
+        return float(self._inverter.efficiency_pct)
+
+    @property
+    def euro_efficiency_percent(self):
+        return float(self._inverter.efficiency_pct * 0.995)
+
+    @property
+    def max_dc_voltage_v(self):
+        return float(getattr(self._inverter, 'max_dc_voltage_v', None) or 1000.0)
+
+    @property
+    def min_dc_voltage_v(self):
+        return float(getattr(self._inverter, 'mppt_min_v', None) or 200.0)
+
+    @property
+    def mppt_voltage_min_v(self):
+        return float(getattr(self._inverter, 'mppt_min_v', None) or 200.0)
+
+    @property
+    def mppt_voltage_max_v(self):
+        return float(getattr(self._inverter, 'mppt_max_v', None) or 950.0)
+
+    @property
+    def max_dc_current_a(self):
+        return float(getattr(self._inverter, 'max_dc_current_a', None) or 25.0)
+
+    @property
+    def number_of_inputs(self):
+        return int(getattr(self._inverter, 'max_strings', None) or 2)
+
+    @property
+    def number_of_mppts(self):
+        return int(getattr(self._inverter, 'mppt_channels', None) or 2)
+
+    @property
+    def weight_kg(self):
+        kw = self._inverter.capacity_kw
+        if kw >= 100: return 75.0
+        elif kw >= 50: return 43.0
+        elif kw >= 20: return 25.0
+        return 12.0
+
+    @property
+    def dimensions_mm(self):
+        return '525x470x182 mm'
+
+    def __str__(self):
+        return str(self._inverter)
+
+
 def _load_project(project_id: str, request: Request) -> dict | None:
     """
     Attempt to load a DesignProject from the database and assemble the
@@ -86,82 +258,162 @@ def _load_project(project_id: str, request: Request) -> dict | None:
     if project_id == 'demo':
         return _synthetic_project(request)
 
+    # 1. Isolate the main project/climate query.
+    # Fallback to synthetic ONLY if models are not migrated or project doesn't exist.
     try:
         from solar_data.models import DesignProject, DailyClimateData, SolarPanel, Inverter  # noqa: PLC0415
-
-        project = DesignProject.objects.select_related(
-            'location'
-        ).get(pk=project_id)
-
-        climate = DailyClimateData.objects.filter(
-            location=project.location
-        ).order_by('date')
-
-        pareto = project.pareto_solutions or []
-        selected = project.selected_design or (pareto[0] if pareto else {})
-
-        opt = {
-            'pareto_solutions': pareto,
-            'selected_design': selected,
-            'run_id': project.optimization_run_id,
-        }
-
-        # Load panel and inverter equipments from DB if IDs are present in the selected solution
-        panel = None
-        inverter = None
-        
-        panel_id = selected.get('panel_id')
-        if panel_id:
-            panel = SolarPanel.objects.filter(pk=panel_id).first()
-            
-        inverter_id = selected.get('inverter_id')
-        if inverter_id:
-            inverter = Inverter.objects.filter(pk=inverter_id).first()
-
-        panel_count = selected.get('panel_count')
-        if not panel_count:
-            panel_count = 30
-
-        # Build company dict from query params
-        company = {
-            'name'           : request.query_params.get('company_name', ''),
-            'address'        : request.query_params.get('company_address', ''),
-            'phone'          : request.query_params.get('company_phone', ''),
-            'email'          : request.query_params.get('company_email', ''),
-            'egypteraLicense': request.query_params.get('company_egyptera', ''),
-        }
-
-        return {
-            'project_id'          : str(project.pk),
-            'location'            : project.location,
-            'panel'               : panel,
-            'inverter'            : inverter,
-            'system_config'       : {
-                'panel_count'       : panel_count,
-                'tilt_angle'        : float(request.query_params.get(
-                                          'tilt_angle',
-                                          getattr(project, 'tilt_angle', 20))),
-                'azimuth'           : float(request.query_params.get(
-                                          'azimuth',
-                                          getattr(project, 'azimuth', 180))),
-                'strings'           : getattr(project, 'string_count', 3),
-                'panels_per_string' : getattr(project, 'panels_per_string', 10),
-                'inverter_count'    : getattr(project, 'inverter_count', 1),
-            },
-            'climate_data'        : climate,
-            'dust_loss_pct'       : float(getattr(project, 'dust_loss_pct', 5.0)),
-            'shading_loss_pct'    : float(getattr(project, 'shading_loss_pct', 3.0)),
-            'optimization_results': opt,
-            # Also expose pareto solutions at top-level for the PDF engine
-            'pareto_solutions'    : pareto,
-            'roof_image_path'     : getattr(project, 'annotated_roof_image_path', None),
-            'company'             : company,
-        }
-
-    except Exception as exc:                        # noqa: BLE001
-        logger.warning("Cannot load project %s from DB (%s) — using synthetic data.",
-                       project_id, exc)
+        project = DesignProject.objects.select_related('location').get(pk=project_id)
+        climate = DailyClimateData.objects.filter(location=project.location).order_by('date')
+    except (ImportError, DesignProject.DoesNotExist) as exc:
+        logger.warning("Cannot load project %s from DB (%s) — using synthetic data.", project_id, exc)
         return _synthetic_project(request)
+    except Exception as exc:
+        logger.exception("Database error loading project %s", project_id)
+        return None
+
+    # From here on, we do NOT fall back to synthetic data.
+    # We load project details and recover gracefully from missing data/equipment.
+    pareto = project.pareto_solutions or []
+    selected = project.selected_design or (pareto[0] if pareto else {})
+
+    opt = {
+        'pareto_solutions': pareto,
+        'selected_design': selected,
+        'run_id': project.optimization_run_id,
+    }
+
+    # Load panel and inverter equipments from DB if IDs are present in the selected solution
+    panel = None
+    inverter = None
+    
+    # Standardize query param fetching to support both DRF Request and standard Django HttpRequest
+    qparams = getattr(request, 'query_params', getattr(request, 'GET', {}))
+
+    # Helper to safely lookup SolarPanel
+    panel_id = selected.get('panel_id')
+    panel_brand = selected.get('panel_brand')
+    panel_model = selected.get('panel_model')
+    
+    if panel_id:
+        # A) Try by primary key if it is numeric
+        if isinstance(panel_id, int) or (isinstance(panel_id, str) and panel_id.isdigit()):
+            try:
+                panel = SolarPanel.objects.filter(pk=int(panel_id)).first()
+            except Exception as e:
+                logger.warning("Failed to query SolarPanel by pk=%s: %s", panel_id, e)
+        
+        # B) Try by brand and model
+        if not panel and panel_brand and panel_model:
+            try:
+                panel = SolarPanel.objects.filter(
+                    brand__iexact=panel_brand,
+                    model__iexact=panel_model
+                ).first()
+            except Exception as e:
+                logger.warning("Failed to query SolarPanel by brand/model (%s/%s): %s", panel_brand, panel_model, e)
+                
+        # C) Try by matching slug
+        if not panel and isinstance(panel_id, str):
+            try:
+                for p in SolarPanel.objects.all():
+                    slug = f"{p.brand}-{p.model}".lower().replace(' ', '-')
+                    if slug == panel_id:
+                        panel = p
+                        break
+            except Exception as e:
+                logger.warning("Failed to query SolarPanel by slug %s: %s", panel_id, e)
+
+    if panel:
+        panel = SolarPanelWrapper(panel)
+
+    # Helper to safely lookup Inverter
+    inverter_id = selected.get('inverter_id')
+    inverter_brand = selected.get('inverter_brand')
+    inverter_model = selected.get('inverter_model')
+    
+    if inverter_id:
+        # A) Try by primary key if it is numeric
+        if isinstance(inverter_id, int) or (isinstance(inverter_id, str) and inverter_id.isdigit()):
+            try:
+                inverter = Inverter.objects.filter(pk=int(inverter_id)).first()
+            except Exception as e:
+                logger.warning("Failed to query Inverter by pk=%s: %s", inverter_id, e)
+        
+        # B) Try by brand and model
+        if not inverter and inverter_brand and inverter_model:
+            try:
+                inverter = Inverter.objects.filter(
+                    brand__iexact=inverter_brand,
+                    model__iexact=inverter_model
+                ).first()
+            except Exception as e:
+                logger.warning("Failed to query Inverter by brand/model (%s/%s): %s", inverter_brand, inverter_model, e)
+                
+        # C) Try by matching slug
+        if not inverter and isinstance(inverter_id, str):
+            try:
+                for inv in Inverter.objects.all():
+                    slug = f"{inv.brand}-{inv.model}".lower().replace(' ', '-')
+                    if slug == inverter_id:
+                        inverter = inv
+                        break
+            except Exception as e:
+                logger.warning("Failed to query Inverter by slug %s: %s", inverter_id, e)
+
+    if inverter:
+        inverter = InverterWrapper(inverter)
+
+    # Build company dict from query params
+    company = {
+        'name'           : qparams.get('company_name', ''),
+        'address'        : qparams.get('company_address', ''),
+        'phone'          : qparams.get('company_phone', ''),
+        'email'          : qparams.get('company_email', ''),
+        'egypteraLicense': qparams.get('company_egyptera', ''),
+    }
+
+    # Safe float parsing helper
+    def _get_float_param(key, default_val):
+        val = qparams.get(key)
+        if val is not None and val != '':
+            try:
+                return float(val)
+            except (ValueError, TypeError):
+                pass
+        try:
+            return float(default_val)
+        except (ValueError, TypeError):
+            return 20.0
+
+    panel_count = selected.get('panel_count')
+    if not panel_count:
+        panel_count = 30
+
+    tilt_angle = _get_float_param('tilt_angle', selected.get('tilt_angle', getattr(project, 'tilt_angle', 20)))
+    azimuth = _get_float_param('azimuth', selected.get('azimuth', getattr(project, 'azimuth', 180)))
+
+    return {
+        'project_id'          : str(project.pk),
+        'location'            : project.location,
+        'panel'               : panel,
+        'inverter'            : inverter,
+        'system_config'       : {
+            'panel_count'       : panel_count,
+            'tilt_angle'        : tilt_angle,
+            'azimuth'           : azimuth,
+            'strings'           : selected.get('string_count', getattr(project, 'string_count', 3)) or 3,
+            'panels_per_string' : selected.get('panels_per_string', getattr(project, 'panels_per_string', 10)) or 10,
+            'inverter_count'    : selected.get('inverter_count', getattr(project, 'inverter_count', 1)) or 1,
+        },
+        'climate_data'        : climate,
+        'dust_loss_pct'       : float(getattr(project, 'dust_loss_pct', 5.0)),
+        'shading_loss_pct'    : float(getattr(project, 'shading_loss_pct', 3.0)),
+        'optimization_results': opt,
+        # Also expose pareto solutions at top-level for the PDF engine
+        'pareto_solutions'    : pareto,
+        'roof_image_path'     : getattr(project, 'annotated_roof_image_path', None),
+        'company'             : company,
+    }
 
 
 def _synthetic_project(request: Request) -> dict:
