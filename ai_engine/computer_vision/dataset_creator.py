@@ -473,18 +473,26 @@ class YOLODatasetCreator:
         s      = image_size
         obstacle_classes = [1, 2, 3, 4, 6]
 
-        def _make_image_array():
-            base_r = rng.randint(170, 220)
-            img = np_rng.integers(
-                max(0, base_r - 20), min(255, base_r + 20),
-                size=(s, s, 3), dtype=np.uint8,
-            )
-            img[:, :, 1] = np.clip(
-                img[:, :, 0].astype(int) + rng.randint(-10, 10), 0, 255
-            ).astype(np.uint8)
-            img[:, :, 2] = np.clip(
-                img[:, :, 0].astype(int) + rng.randint(-20, 5), 0, 255
-            ).astype(np.uint8)
+        def _make_image_array(roof_pts, placed_boxes, tree_pts):
+            import cv2
+            # Background
+            base_r = rng.randint(80, 130)
+            img = np.full((s, s, 3), [base_r, base_r, base_r], dtype=np.uint8)
+            
+            # Roof
+            roof_pts_np = np.array(roof_pts, dtype=np.int32).reshape((-1, 1, 2))
+            cv2.fillPoly(img, [roof_pts_np], (rng.randint(150, 180), rng.randint(150, 180), rng.randint(150, 180)))
+            
+            # Obstacles
+            for box in placed_boxes:
+                cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), 
+                              (rng.randint(50, 100), rng.randint(50, 100), rng.randint(50, 100)), -1)
+                
+            # Tree
+            if tree_pts:
+                tree_pts_np = np.array(tree_pts, dtype=np.int32).reshape((-1, 1, 2))
+                cv2.fillPoly(img, [tree_pts_np], (rng.randint(0, 50), rng.randint(80, 120), rng.randint(0, 50)))
+
             noise = np_rng.integers(-8, 8, size=(s, s, 3))
             return np.clip(img.astype(int) + noise, 0, 255).astype(np.uint8)
 
@@ -552,7 +560,9 @@ class YOLODatasetCreator:
             lines = [self._pts_to_yolo_line(0, roof_pts, s, s)] + obstacle_lines
             img_fname = f'synthetic_{split}_{idx:04d}.jpg'
             lbl_fname = f'synthetic_{split}_{idx:04d}.txt'
-            _save_jpeg(_make_image_array(), img_dir / img_fname)
+            
+            tree_pts_val = tree_pts if 'tree_pts' in locals() else []
+            _save_jpeg(_make_image_array(roof_pts, placed_boxes, tree_pts_val), img_dir / img_fname)
             with open(lbl_dir / lbl_fname, 'w') as f:
                 f.write('\n'.join(lines) + '\n')
 
