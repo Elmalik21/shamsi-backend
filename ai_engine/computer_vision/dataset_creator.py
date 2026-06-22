@@ -483,16 +483,38 @@ class YOLODatasetCreator:
             roof_pts_np = np.array(roof_pts, dtype=np.int32).reshape((-1, 1, 2))
             cv2.fillPoly(img, [roof_pts_np], (rng.randint(150, 180), rng.randint(150, 180), rng.randint(150, 180)))
             
-            # Obstacles
+            # Obstacles (Seamless Cloning)
             for box in placed_boxes:
-                cv2.rectangle(img, (box[0], box[1]), (box[2], box[3]), 
-                              (rng.randint(50, 100), rng.randint(50, 100), rng.randint(50, 100)), -1)
+                x1, y1, x2, y2 = box
+                w_box, h_box = x2 - x1, y2 - y1
+                if w_box < 5 or h_box < 5: 
+                    continue
                 
-            # Tree
+                obs_color = (rng.randint(50, 100), rng.randint(50, 100), rng.randint(50, 100))
+                src = np.full((h_box, w_box, 3), obs_color, dtype=np.uint8)
+                
+                # Add texture to obstacle
+                noise_src = np_rng.integers(-15, 15, size=(h_box, w_box, 3))
+                src = np.clip(src.astype(int) + noise_src, 0, 255).astype(np.uint8)
+                
+                mask = np.full((h_box, w_box), 255, dtype=np.uint8)
+                center = (x1 + w_box // 2, y1 + h_box // 2)
+                
+                try:
+                    # Poisson Blending (NORMAL_CLONE) to adapt to roof lighting
+                    img = cv2.seamlessClone(src, img, mask, center, cv2.NORMAL_CLONE)
+                except cv2.error:
+                    cv2.rectangle(img, (x1, y1), (x2, y2), obs_color, -1)
+                
+            # Tree Shadows (Alpha Blending for translucent effect)
             if tree_pts:
                 tree_pts_np = np.array(tree_pts, dtype=np.int32).reshape((-1, 1, 2))
-                cv2.fillPoly(img, [tree_pts_np], (rng.randint(0, 50), rng.randint(80, 120), rng.randint(0, 50)))
+                tree_layer = img.copy()
+                cv2.fillPoly(tree_layer, [tree_pts_np], (rng.randint(0, 50), rng.randint(80, 120), rng.randint(0, 50)))
+                cv2.addWeighted(tree_layer, 0.6, img, 0.4, 0, img)
 
+            # Global Optics simulation (Blur)
+            img = cv2.GaussianBlur(img, (3, 3), 0)
             noise = np_rng.integers(-8, 8, size=(s, s, 3))
             return np.clip(img.astype(int) + noise, 0, 255).astype(np.uint8)
 
