@@ -368,7 +368,8 @@ class PVsystExporter:
         safe = f"{p.manufacturer}_{p.model}".replace(' ', '_')
 
         # Derive NOCT if not stored (typical default 45°C)
-        noct = getattr(p, 'noct_celsius', 45)
+        noct_val = getattr(p, 'noct_celsius', None)
+        noct = float(noct_val) if noct_val is not None else 45.0
 
         content = (
             f"PVsyst Panel database  Version 1.0\n"
