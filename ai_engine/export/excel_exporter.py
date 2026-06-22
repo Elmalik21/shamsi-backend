@@ -237,7 +237,7 @@ class ExcelExporter:
         cfg = self.config
         p   = self.panel
         loc = self.location
-        sys_kwp = cfg['panel_count'] * p.power_rating_w / 1000
+        sys_kwp = self.project.get('system_kw') or (cfg['panel_count'] * p.power_rating_w / 1000)
 
         # Title block
         _merge_title(ws, 1, 1, 5, 'SHAMSI SMART AI — SOLAR DESIGN SUMMARY')
@@ -295,18 +295,38 @@ class ExcelExporter:
 
         _merge_title(ws, 1, 1, 2, 'System Design Parameters')
 
+        sys_kwp = self.project.get('system_kw') or (self.config['panel_count'] * self.panel.power_rating_w / 1000)
+        system_type = self.project.get('system_type_str', 'Grid-Tied Solar System (On-Grid, No Battery)')
+        dust_loss = self.project.get('dust_loss_pct', 5.0)
+
         rows = [
             ('SYSTEM CONFIGURATION', None),
-            ('System Type',         'Grid-Tied (No Battery)'),
-            ('Peak DC Capacity',    f"{self.config['panel_count'] * self.panel.power_rating_w / 1000:.3f} kWp"),
+            ('System Type',         system_type),
+            ('Peak DC Capacity',    f"{sys_kwp:.3f} kWp"),
             ('Number of Strings',   str(self.config.get('strings', 'N/A'))),
             ('Modules / String',    str(self.config.get('panels_per_string', 'N/A'))),
             ('Tilt Angle',          f"{self.config['tilt_angle']:.1f}°"),
             ('Azimuth',             f"{self.config.get('azimuth', 180):.0f}° (South=180°)"),
             ('Inverter Count',      str(self.config.get('inverter_count', 1))),
             (None, None),
+            ('ROOF LAYOUT DESIGN', None),
+            ('Required Roof Area',  f"≈ {self.project.get('roof_area_needed', 0.0):.1f} m²"),
+            (None, None),
+            ('ELECTRICAL CABLE SUMMARY', None),
+            ('DC Solar Cable (PV1-F)', self.project.get('cable_summary', {}).get('dc_cable', '—')),
+            ('DC Design Voltage Drop', self.project.get('cable_summary', {}).get('dc_voltage_drop', '—')),
+            ('AC Main Cable',       self.project.get('cable_summary', {}).get('ac_cable', '—')),
+            ('AC Design Voltage Drop', self.project.get('cable_summary', {}).get('ac_voltage_drop', '—')),
+            (None, None),
+            ('ELECTRICAL PROTECTION DEVICES', None),
+            ('DC PV String Fuses',  self.project.get('protections', {}).get('dc_fuse', '—')),
+            ('DC Circuit Breaker',  self.project.get('protections', {}).get('dc_breaker', '—')),
+            ('DC Surge Protection (SPD)', self.project.get('protections', {}).get('dc_spd', '—')),
+            ('AC Circuit Breaker',  self.project.get('protections', {}).get('ac_breaker', '—')),
+            ('AC Surge Protection (SPD)', self.project.get('protections', {}).get('ac_spd', '—')),
+            (None, None),
             ('LOSS ASSUMPTIONS', None),
-            ('Dust / Soiling',      '5.0%'),
+            ('Dust / Soiling',      f"{dust_loss:.1f}%"),
             ('DC Wiring',           '2.0%'),
             ('Mismatch',            '2.0%'),
             ('Inverter',            '~1.6%'),
@@ -411,7 +431,9 @@ class ExcelExporter:
         annual_kwh  = self.results.get('annual_yield_kwh', 0) or 0
         total_cost  = self.results.get('total_cost_egp', 0) or 0
         payback_yrs = self.results.get('payback_years', 0) or 0
-        elec_price  = 1.65    # EGP/kWh
+        
+        usage_type = self.project.get('usage_type', 'RESIDENTIAL') or 'RESIDENTIAL'
+        elec_price  = 1.35 if usage_type == 'RESIDENTIAL' else 1.75
         degradation = 0.005   # 0.5%/yr
         escalation  = 0.05    # 5%/yr
 
@@ -465,7 +487,8 @@ class ExcelExporter:
         kpis = [
             ('Total Investment',        f"{total_cost:,.0f} EGP"),
             ('Simple Payback',          f"{payback_yrs:.1f} years"),
-            ('25-Year Gross Savings',   f"{self.results.get('lifetime_savings_egp', 0):,.0f} EGP"),
+            ('25-Year Gross Savings',   f"{self.results.get('gross_savings_25yr', 0):,.0f} EGP"),
+            ('25-Year Net Savings',     f"{self.results.get('lifetime_savings_egp', 0):,.0f} EGP"),
             ('CO₂ Offset (25 yr)',      f"{annual_kwh * 25 * 0.47 / 1000:.0f} tonnes"),
         ]
         for i, (label, value) in enumerate(kpis):

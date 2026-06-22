@@ -392,7 +392,7 @@ def _load_project(project_id: str, request: Request) -> dict | None:
     tilt_angle = _get_float_param('tilt_angle', selected.get('tilt_angle', getattr(project, 'tilt_angle', 20)))
     azimuth = _get_float_param('azimuth', selected.get('azimuth', getattr(project, 'azimuth', 180)))
 
-    return {
+    res_dict = {
         'project_id'          : str(project.pk),
         'location'            : project.location,
         'panel'               : panel,
@@ -414,6 +414,8 @@ def _load_project(project_id: str, request: Request) -> dict | None:
         'roof_image_path'     : getattr(project, 'annotated_roof_image_path', None),
         'company'             : company,
     }
+    from ai_engine.export.calc_engine import normalize_and_validate_project
+    return normalize_and_validate_project(res_dict)
 
 
 def _synthetic_project(request: Request) -> dict:
@@ -421,13 +423,16 @@ def _synthetic_project(request: Request) -> dict:
     from ai_engine.export.pvsyst_exporter import make_synthetic_project
     project = make_synthetic_project('Cairo')
     # Allow query param overrides
-    panel_w = int(request.query_params.get('panel_power_w', 580))
-    tilt    = float(request.query_params.get('tilt_angle', 20))
-    az      = float(request.query_params.get('azimuth', 180))
+    qparams = getattr(request, 'query_params', getattr(request, 'GET', {}))
+    panel_w = int(qparams.get('panel_power_w', 580))
+    tilt    = float(qparams.get('tilt_angle', 20))
+    az      = float(qparams.get('azimuth', 180))
     project['panel'].power_rating_w         = panel_w
     project['system_config']['tilt_angle']  = tilt
     project['system_config']['azimuth']     = az
-    return project
+    
+    from ai_engine.export.calc_engine import normalize_and_validate_project
+    return normalize_and_validate_project(project)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -604,6 +609,10 @@ def export_pdf(request: Request, project_id: str) -> Response:
                     loc['name'] = loc_name
                 elif hasattr(loc, 'name'):
                     loc.name = loc_name
+
+        # Re-run engineering validation on updated project dict
+        from ai_engine.export.calc_engine import normalize_and_validate_project
+        project = normalize_and_validate_project(project)
 
     try:
         from ai_engine.export.pdf_report import ProfessionalPDFReport

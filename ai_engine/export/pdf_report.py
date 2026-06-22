@@ -360,15 +360,11 @@ class _HeaderFooter:
 def _build_system_diagram(system_kw: float, panel_count: int,
                            inverter_kw: float = 0) -> Drawing:
     """
-    Draw a horizontal PV system block diagram:
-
-      ┌──────────┐  DC  ┌──────────┐  AC  ┌─────┐     ┌────────────┐
-      │ PV Array │─────▶│ Inverter │─────▶│ MDB │─┬──▶│ Utility Grid│
-      │ N×kWp    │      │  DC/AC   │      │     │ │   └────────────┘
-      └──────────┘      └──────────┘      └─────┘ └──▶ Building Load
+    Draw a detailed PV system single-line diagram (SLD):
+    PV Array -> DC Fuses -> DC Breaker & SPD -> Inverter -> AC MCB & SPD -> Main DB -> Grid / Load
     """
     W = 170 * mm
-    H = 42  * mm
+    H = 48  * mm
 
     d = Drawing(W, H)
 
@@ -376,83 +372,67 @@ def _build_system_diagram(system_kw: float, panel_count: int,
     d.add(Rect(0, 0, W, H, fillColor=colors.white,
                strokeColor=colors.HexColor(C_BORDER), strokeWidth=0.5))
 
-    # ── Helper: box with two text lines ─────────────────────────────────────
-    def _box(x, y, w, h, line1, line2=''):
-        d.add(Rect(x, y, w, h, fillColor=colors.HexColor(C_ROW_EVEN),
+    # Helper: box with text lines
+    def _box(x, y, w, h, line1, line2='', bg_color=C_ROW_EVEN):
+        d.add(Rect(x, y, w, h, fillColor=colors.HexColor(bg_color),
                    strokeColor=colors.HexColor(C_BORDER), strokeWidth=1.2))
-        d.add(String(x + w/2, y + h/2 + 2.5, line1,
-                     fontSize=8, fontName='Helvetica-Bold',
+        d.add(String(x + w/2, y + h/2 + 2.0, line1,
+                     fontSize=7.5, fontName='Helvetica-Bold',
                      textAnchor='middle', fillColor=colors.HexColor(C_DARK)))
         if line2:
             d.add(String(x + w/2, y + h/2 - 5.5, line2,
-                         fontSize=6.5, fontName='Helvetica',
-                         textAnchor='middle', fillColor=colors.HexColor(C_MUTED)))
-
-    # ── Helper: horizontal arrow ─────────────────────────────────────────────
-    def _harrow(x1, y_mid, x2, label=''):
-        d.add(Line(x1, y_mid, x2 - 2*mm, y_mid,
-                   strokeColor=colors.HexColor(C_DARK), strokeWidth=1.4))
-        # Arrowhead
-        tip_x = x2 - 0.5*mm
-        d.add(Polygon([tip_x, y_mid,
-                       tip_x - 3*mm, y_mid + 1.5*mm,
-                       tip_x - 3*mm, y_mid - 1.5*mm],
-                      fillColor=colors.HexColor(C_DARK),
-                      strokeColor=colors.HexColor(C_DARK), strokeWidth=0.5))
-        if label:
-            d.add(String((x1 + x2) / 2, y_mid + 2.5*mm, label,
-                         fontSize=6.5, fontName='Helvetica-Bold',
+                         fontSize=6.0, fontName='Helvetica',
                          textAnchor='middle', fillColor=colors.HexColor(C_MUTED)))
 
     mid_y = H / 2
 
-    # PV Array  (x=5, width=33)
-    kw_label = f'{system_kw:.1f} kWp' if system_kw else ''
+    # 1. PV Array
+    kw_label = f'{system_kw:.2f} kWp' if system_kw else ''
     panels_label = f'{panel_count} modules' if panel_count else ''
-    _box(5*mm, mid_y - 10*mm, 33*mm, 20*mm, 'PV ARRAY', f'{kw_label}  {panels_label}'.strip())
+    _box(5*mm, mid_y - 9*mm, 26*mm, 18*mm, 'PV ARRAY', f'{kw_label}\n{panels_label}'.replace('\n', ' '))
 
-    # DC Arrow
-    _harrow(38*mm, mid_y, 55*mm, 'DC')
+    # Connection line PV -> Fuses
+    d.add(Line(31*mm, mid_y, 40*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
 
-    # Inverter (x=55, width=33)
-    inv_label = f'{inverter_kw:.1f} kW AC' if inverter_kw else 'DC / AC'
-    _box(55*mm, mid_y - 10*mm, 33*mm, 20*mm, 'INVERTER', inv_label)
+    # 2. DC Fuses Box
+    _box(40*mm, mid_y - 8*mm, 15*mm, 16*mm, 'DC FUSES', '15A gPV', bg_color='#fffbeb')
 
-    # AC Arrow
-    _harrow(88*mm, mid_y, 106*mm, 'AC')
+    # Line Fuses -> DC MCB
+    d.add(Line(55*mm, mid_y, 64*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
 
-    # Main DB (x=106, width=22)
-    _box(106*mm, mid_y - 10*mm, 22*mm, 20*mm, 'MDB', 'Main DB')
+    # 3. DC Breaker / SPD Box
+    _box(64*mm, mid_y - 8*mm, 20*mm, 16*mm, 'DC SPD/MCB', '2-Pole 1kV', bg_color='#fffbeb')
 
-    # Split lines from MDB to Grid and Load
-    split_x = 128*mm
+    # Line DC MCB -> Inverter
+    d.add(Line(84*mm, mid_y, 93*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
+    d.add(String(88.5*mm, mid_y + 1.5*mm, 'DC', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='middle', fillColor=colors.HexColor(C_MUTED)))
 
-    # Line up to Grid
-    d.add(Line(split_x, mid_y, split_x + 4*mm, mid_y + 8*mm,
-               strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
-    d.add(Line(split_x + 4*mm, mid_y + 8*mm, split_x + 14*mm, mid_y + 8*mm,
-               strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
+    # 4. Inverter
+    inv_label = f'{inverter_kw:.1f} kW AC' if inverter_kw else 'DC/AC'
+    _box(93*mm, mid_y - 9*mm, 24*mm, 18*mm, 'INVERTER', inv_label)
 
-    # Line down to Load
-    d.add(Line(split_x, mid_y, split_x + 4*mm, mid_y - 8*mm,
-               strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
-    d.add(Line(split_x + 4*mm, mid_y - 8*mm, split_x + 14*mm, mid_y - 8*mm,
-               strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
+    # Line Inverter -> AC MCB
+    d.add(Line(117*mm, mid_y, 124*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
+    d.add(String(120.5*mm, mid_y + 1.5*mm, 'AC', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='middle', fillColor=colors.HexColor(C_MUTED)))
 
-    # Grid box (top right)
-    _box(142*mm, mid_y + 1*mm, 24*mm, 14*mm, 'UTILITY', 'Grid')
+    # 5. AC MCB / SPD Box
+    _box(124*mm, mid_y - 8*mm, 20*mm, 16*mm, 'AC SPD/MCB', 'Type II', bg_color='#f0fdf4')
 
-    # Load box (bottom right)
-    _box(142*mm, mid_y - 15*mm, 24*mm, 14*mm, 'BUILDING', 'Load')
+    # Line AC MCB -> Main DB
+    d.add(Line(144*mm, mid_y, 149*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
 
-    # Arrowheads on the split branches
-    tip_x = 142*mm - 0.5*mm
-    for y_tip in [mid_y + 8*mm, mid_y - 8*mm]:
-        d.add(Polygon([tip_x, y_tip,
-                       tip_x - 3*mm, y_tip + 1.5*mm,
-                       tip_x - 3*mm, y_tip - 1.5*mm],
-                      fillColor=colors.HexColor(C_DARK),
-                      strokeColor=colors.HexColor(C_DARK), strokeWidth=0.4))
+    # 6. Main DB (MDB)
+    _box(149*mm, mid_y - 8*mm, 16*mm, 16*mm, 'MAIN DB', 'Utility MDB')
+
+    # Lines from MDB to Grid and Load
+    # Vertical line at 165 mm
+    split_x = 165*mm
+    d.add(Line(165*mm, mid_y, 169*mm, mid_y + 8*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
+    d.add(Line(165*mm, mid_y, 169*mm, mid_y - 8*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
+
+    # Arrow tips / destinations
+    d.add(String(169*mm, mid_y + 10*mm, 'To Grid', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
+    d.add(String(169*mm, mid_y - 12*mm, 'To Load', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
 
     return d
 
@@ -648,6 +628,9 @@ class ProfessionalPDFReport:
         story.append(PageBreak())
 
         story += self._financial_analysis(styles)
+        story.append(PageBreak())
+
+        story += self._warnings_page(styles)
         story.append(PageBreak())
 
         story += self._technical_appendix(styles)
@@ -874,7 +857,10 @@ class ProfessionalPDFReport:
 
         # Geographic params
         elements.append(Paragraph('Geographic Parameters', styles['SubHeader']))
-        avg_ghi = self._estimate_avg_ghi(lat)
+        avg_ghi = self.project.get('avg_ghi_daily') or self._estimate_avg_ghi(lat)
+        climate_zone = self.project.get('climate_zone') or self._classify_climate(lat, lon)
+        dust_pct = float(self.project.get('dust_loss_pct') or 5.0)
+
         site_rows = [
             ['Parameter',         'Value'],
             ['Site Name',         loc_name],
@@ -882,11 +868,11 @@ class ProfessionalPDFReport:
             ['Latitude',          f'{lat:.4f}°  N'],
             ['Longitude',         f'{lon:.4f}°  E'],
             ['Elevation',         f'{elev:.0f} m ASL'],
-            ['Climate Zone',      self._classify_climate(lat, lon)],
+            ['Climate Zone',      climate_zone],
             ['Time Zone',         'UTC+2 (EET — Eastern European Time)'],
             ['Annual Avg. GHI',   f'{avg_ghi:.2f} kWh/m²/day  ({avg_ghi*365:.0f} kWh/m²/yr)'],
-            ['Peak Sun Hours',    f'≈ {avg_ghi*1.05:.0f} hrs/yr  (effective)'],
-            ['Dust Zone',         self._classify_dust(lat, lon)],
+            ['Peak Sun Hours',    f'{avg_ghi:.2f} hours/day (average)'],
+            ['Dust / Dust Zone',  f'{dust_pct:.1f}% annual soiling loss'],
             ['Climate Data Src.', 'NASA POWER (8+ years, 0.5° × 0.5° grid)'],
         ]
         tbl = Table(site_rows, colWidths=[80*mm, 90*mm])
@@ -899,7 +885,6 @@ class ProfessionalPDFReport:
         tilt = float(self.config.get('tilt_angle', 20) or 20)
         az   = float(self.config.get('azimuth', 180) or 180)
         shading = float(self.project.get('shading_loss_pct', 3) or 3)
-        dust    = float(self.project.get('dust_loss_pct', 5) or 5)
 
         elements.append(Paragraph('Installation Parameters', styles['SubHeader']))
         inst_rows = [
@@ -908,7 +893,7 @@ class ProfessionalPDFReport:
             ['Array Azimuth',          f'{az:.0f}°  (180° = True South)'],
             ['Mounting Type',          'Fixed Tilt — Roof / Ground Mount'],
             ['Assumed Shading Loss',   f'{shading:.1f}%'],
-            ['Dust / Soiling Loss',    f'{dust:.1f}%  (desert conditions)'],
+            ['Dust / Soiling Loss',    f'{dust_pct:.1f}%'],
             ['DC Wiring Loss',         '2.0%  (IEC 60364-7-712 compliant)'],
             ['String Mismatch Loss',   '2.0%  (module binning tolerance)'],
         ]
@@ -921,6 +906,47 @@ class ProfessionalPDFReport:
         tbl2 = Table(inst_rows, colWidths=[80*mm, 90*mm])
         tbl2.setStyle(_metric_table_style())
         elements.append(tbl2)
+
+        # Add Monthly Weather & Irradiance Table
+        elements.append(Spacer(1, 4*mm))
+        elements.append(Paragraph('Monthly Irradiance &amp; Meteorological Data', styles['SubHeader']))
+        
+        months_short = ['January', 'February', 'March', 'April', 'May', 'June',
+                        'July', 'August', 'September', 'October', 'November', 'December']
+        irr_rows = [['Month', 'GHI (Horiz.) (kWh/m²/day)', 'POA (Tilted) (kWh/m²/day)', 'Avg. Ambient Temp (°C)']]
+        
+        m_ghi = self.project.get('monthly_ghi') or [0]*12
+        m_poa = self.project.get('monthly_poa') or [0]*12
+        m_temp = self.project.get('monthly_temp') or [25]*12
+        
+        for i, m_name in enumerate(months_short):
+            ghi_d = m_ghi[i] / 30.4 if m_ghi[i] > 0 else 0
+            poa_d = m_poa[i] / 30.4 if m_poa[i] > 0 else 0
+            temp_val = m_temp[i]
+            irr_rows.append([
+                m_name,
+                f"{ghi_d:.2f}",
+                f"{poa_d:.2f}",
+                f"{temp_val:.1f}"
+            ])
+            
+        irr_tbl = Table(irr_rows, colWidths=[55*mm, 40*mm, 40*mm, 35*mm])
+        irr_tbl.setStyle(TableStyle([
+            ('BACKGROUND',    (0, 0), (-1, 0),   colors.HexColor(C_HEADER_BG)),
+            ('TEXTCOLOR',     (0, 0), (-1, 0),   colors.white),
+            ('FONTNAME',      (0, 0), (-1, 0),   'Helvetica-Bold'),
+            ('FONTSIZE',      (0, 0), (-1, -1),  8.0),
+            ('ALIGN',         (0, 0), (0, -1),   'LEFT'),
+            ('ALIGN',         (1, 0), (-1, -1),  'RIGHT'),
+            ('ROWBACKGROUNDS',(0, 1), (-1, -1),
+             [colors.HexColor(C_ROW_EVEN), colors.HexColor(C_ROW_ODD)]),
+            ('GRID',          (0, 0), (-1, -1),  0.5, colors.HexColor(C_BORDER)),
+            ('TOPPADDING',    (0, 0), (-1, -1),  4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1),  4),
+            ('LEFTPADDING',   (0, 0), (-1, -1),  6),
+            ('RIGHTPADDING',  (0, 0), (-1, -1),  6),
+        ]))
+        elements.append(irr_tbl)
 
         # Roof image if available
         roof_img = self.project.get('roof_image_path')
@@ -986,9 +1012,12 @@ class ProfessionalPDFReport:
         # ── System Overview ──────────────────────────────────────────────────
         elements.append(Paragraph('System Configuration', styles['SubHeader']))
         pr_val = float(res.get('performance_ratio') or 0)
+        system_type_str = self.project.get('system_type_str', 'Grid-Tied Solar System (On-Grid, No Battery)')
+        roof_area_needed = self.project.get('roof_area_needed', 0.0)
+        
         sys_rows = [
             ['Parameter',             'Value'],
-            ['System Type',           'Grid-Tied  (On-Grid, No Battery)'],
+            ['System Type',           system_type_str],
             ['Peak Capacity (DC)',     f'{self.system_kw:.3f} kWp'],
             ['Total Modules',         str(self.panel_count)],
         ]
@@ -999,6 +1028,7 @@ class ProfessionalPDFReport:
             ['Array Azimuth',         f'{az:.0f}°  (True South = 180°)'],
             ['Number of Inverters',   str(inv_count)],
             ['DC/AC Ratio',           f'{self.system_kw / (inv_kw * inv_count):.2f}' if (inv_kw and inv_count) else '—'],
+            ['Required Roof Area',    f'≈ {roof_area_needed:.1f} m²  (includes row-spacing layout)'],
             ['Performance Ratio (PR)',f'{pr_val*100:.1f}%' if pr_val else '~80%  (estimated)'],
         ]
         tbl = Table(sys_rows, colWidths=[80*mm, 90*mm])
@@ -1007,12 +1037,12 @@ class ProfessionalPDFReport:
         elements.append(Spacer(1, 4*mm))
 
         # ── Block Diagram ────────────────────────────────────────────────────
-        elements.append(Paragraph('System Architecture Diagram', styles['SubHeader']))
+        elements.append(Paragraph('Detailed Single-Line Schematic', styles['SubHeader']))
         diag = _build_system_diagram(self.system_kw, self.panel_count, inv_kw * inv_count)
         elements.append(diag)
         elements.append(Spacer(1, 1*mm))
         elements.append(Paragraph(
-            'Figure 2: Single-line block diagram of the proposed grid-tied PV system.',
+            'Figure 2: Detailed single-line diagram (SLD) of the proposed PV array, inverter, and protection devices.',
             styles['Caption']
         ))
         elements.append(Spacer(1, 4*mm))
@@ -1056,6 +1086,35 @@ class ProfessionalPDFReport:
         inv_tbl = Table(inv_rows, colWidths=[80*mm, 90*mm])
         inv_tbl.setStyle(_spec_table_style())
         elements.append(inv_tbl)
+        
+        # ── Cable Sizing Summary ──────────────────────────────────────────────
+        elements.append(Spacer(1, 4*mm))
+        elements.append(Paragraph('Cable Sizing Summary', styles['SubHeader']))
+        cable = self.project.get('cable_summary', {})
+        cable_rows = [
+            ['Cable Type', 'Recommended Sizing / Spec', 'Design Voltage Drop (%)'],
+            ['DC String Cabling (PV Array to Inverter)', cable.get('dc_cable', '4 mm² PV1-F solar cable'), cable.get('dc_voltage_drop', '1.1%')],
+            ['AC Main Cabling (Inverter to Main DB)', cable.get('ac_cable', '4 mm² Cu AC cable'), cable.get('ac_voltage_drop', '0.8%')],
+        ]
+        cable_tbl = Table(cable_rows, colWidths=[75*mm, 60*mm, 35*mm])
+        cable_tbl.setStyle(_three_col_table_style())
+        elements.append(cable_tbl)
+
+        # ── Protection Devices Summary ────────────────────────────────────────
+        elements.append(Spacer(1, 4*mm))
+        elements.append(Paragraph('Electrical Protection Devices', styles['SubHeader']))
+        prot = self.project.get('protections', {})
+        prot_rows = [
+            ['Device Location', 'Recommended Protection Device', 'Specification Details'],
+            ['DC PV Strings', 'DC String Fuses', prot.get('dc_fuse', '15A gPV, 1000V DC')],
+            ['DC Inverter Inputs', 'DC Circuit Breaker (Isolator)', prot.get('dc_breaker', '20A MCB, 1000V DC, 2-Pole')],
+            ['DC Array Bus / Inverter', 'DC Surge Protection Device (SPD)', prot.get('dc_spd', 'Type II SPD, 1000V DC')],
+            ['AC Inverter Output', 'AC Circuit Breaker (MCB / MCCB)', prot.get('ac_breaker', '20A AC MCB')],
+            ['AC Main DB Connection', 'AC Surge Protection Device (SPD)', prot.get('ac_spd', 'Type II SPD, 275V AC')],
+        ]
+        prot_tbl = Table(prot_rows, colWidths=[55*mm, 60*mm, 55*mm])
+        prot_tbl.setStyle(_three_col_table_style())
+        elements.append(prot_tbl)
 
         return elements
 
@@ -1190,6 +1249,81 @@ class ProfessionalPDFReport:
         fin_tbl = Table(fin_rows, colWidths=[100*mm, 70*mm])
         fin_tbl.setStyle(_metric_table_style())
         elements.append(fin_tbl)
+
+        return elements
+
+    # ─── Warnings Page ────────────────────────────────────────────────────────
+
+    def _warnings_page(self, styles) -> list:
+        warnings = self.project.get('warnings') or []
+
+        elements = [Paragraph('SECTION 5.1 — ENGINEERING COMPLIANCE &amp; WARNINGS', styles['SectionNumber'])]
+        elements.append(HRFlowable(width='100%', thickness=1.5, color=colors.HexColor(C_RULE)))
+        elements.append(Paragraph('Engineering Compliance &amp; Warnings', styles['SectionHeader']))
+
+        intro_text = (
+            "This section presents the results of the automated engineering rule-checks "
+            "and electrical code compliance validations. Sizing validations assess inverter DC/AC ratio, "
+            "string open-circuit voltage at low ambient temperature (cold Voc limit), MPPT operating voltage "
+            "under hot cell temperatures (hot Vmp limit), and inverter compatibility with regulatory grid-tied rules."
+        )
+        elements.append(Paragraph(intro_text, styles['BodyText']))
+        elements.append(Spacer(1, 4*mm))
+
+        if warnings:
+            elements.append(Paragraph('<b>Detected Sizing Violations &amp; Engineering Warnings</b>', styles['SubHeader']))
+            elements.append(Spacer(1, 2*mm))
+
+            for warning in warnings:
+                is_critical = "CRITICAL" in warning.upper() or "OVERVOLTAGE" in warning.upper()
+                bg_color = '#fdf2f2' if is_critical else '#fffbeb'
+                border_color = '#f05252' if is_critical else '#f59e0b'
+                prefix = "<b>[CRITICAL VIOLATION]</b> " if is_critical else "<b>[WARNING]</b> "
+
+                warning_p = Paragraph(f"<font color='{border_color}'>{prefix}</font>{warning}", styles['BodyText'])
+
+                tbl_data = [[warning_p]]
+                tbl = Table(tbl_data, colWidths=[170*mm])
+                tbl.setStyle(TableStyle([
+                    ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor(bg_color)),
+                    ('BOX',        (0, 0), (-1, -1), 1.0, colors.HexColor(border_color)),
+                    ('TOPPADDING', (0, 0), (-1, -1), 8),
+                    ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
+                    ('LEFTPADDING', (0, 0), (-1, -1), 12),
+                    ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+                ]))
+                elements.append(tbl)
+                elements.append(Spacer(1, 4*mm))
+        else:
+            comp_txt = (
+                "<b>System Sizing Status: COMPLIANT</b><br/><br/>"
+                "The solar PV engineering design fully complies with standard sizing rules and regulatory requirements:<br/>"
+                "• <b>DC/AC Ratio</b>: Validated within the optimal engineering window (1.00 – 1.35) preventing underutilization or excessive clipping.<br/>"
+                "• <b>Voltage Sizing (Cold Voc)</b>: Open-circuit voltage remains safely below the inverter's maximum input DC rating under worst-case winter temperatures.<br/>"
+                "• <b>Voltage Sizing (Hot MPPT)</b>: MPPT operating voltage remains within the tracker's voltage window at hot operating conditions, ensuring maximum conversion efficiency.<br/>"
+                "• <b>System Topology</b>: Inverter and system configuration are fully consistent (no battery/grid mismatch detected)."
+            )
+            tbl_data = [[Paragraph(comp_txt, styles['BodyText'])]]
+            tbl = Table(tbl_data, colWidths=[170*mm])
+            tbl.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, -1), colors.HexColor('#f0fdf4')),
+                ('BOX',        (0, 0), (-1, -1), 1.5, colors.HexColor('#22c55e')),
+                ('TOPPADDING', (0, 0), (-1, -1), 12),
+                ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+                ('LEFTPADDING', (0, 0), (-1, -1), 16),
+                ('RIGHTPADDING', (0, 0), (-1, -1), 16),
+            ]))
+            elements.append(tbl)
+            elements.append(Spacer(1, 6*mm))
+
+        elements.append(Paragraph('<b>General Design Recommendations</b>', styles['SubHeader']))
+        rec_text = (
+            "1. <b>DC Cable Sizing</b>: Use the specified PV1-F solar cable to limit voltage drop to &lt; 1.5% as per IEC 60364-7-712 rules.<br/>"
+            "2. <b>Electrical Protection</b>: Ensure all recommended DC fuses, AC/DC surge protection devices (SPDs), and circuit breakers are installed at their respective points to guarantee safety and compliance with EGYPTERA and EEHC rules.<br/>"
+            "3. <b>Soiling/Dust Maintenance</b>: The site location suffers from dust deposition. Implementing a regular quarterly washing schedule (water wash) is highly recommended to maintain solar yield and avoid additional soiling losses.<br/>"
+            "4. <b>Inverter Placement</b>: Install the inverter in a shaded, well-ventilated location. Egypt's ambient summer temperatures can trigger thermal derating in the inverter if exposed to direct sunlight."
+        )
+        elements.append(Paragraph(rec_text, styles['BodyText']))
 
         return elements
 
