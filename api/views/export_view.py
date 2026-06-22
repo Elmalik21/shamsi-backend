@@ -87,36 +87,38 @@ def _load_project(project_id: str, request: Request) -> dict | None:
         return _synthetic_project(request)
 
     try:
-        from solar_data.models import DesignProject, DailyClimateData  # noqa: PLC0415
+        from solar_data.models import DesignProject, DailyClimateData, SolarPanel, Inverter  # noqa: PLC0415
 
         project = DesignProject.objects.select_related(
-            'location', 'panel', 'inverter'
+            'location'
         ).get(pk=project_id)
 
         climate = DailyClimateData.objects.filter(
             location=project.location
         ).order_by('date')
 
-        opt = project.optimization_results or {}
+        pareto = project.pareto_solutions or []
+        selected = project.selected_design or (pareto[0] if pareto else {})
 
-        panel = project.panel
-        inverter = project.inverter
+        opt = {
+            'pareto_solutions': pareto,
+            'selected_design': selected,
+            'run_id': project.optimization_run_id,
+        }
 
-        if not panel and opt.get('pareto_solutions'):
-            sol = opt['pareto_solutions'][0]
-            if sol.get('panel_id'):
-                from solar_data.models import Equipment
-                panel = Equipment.objects.filter(pk=sol['panel_id']).first()
+        # Load panel and inverter equipments from DB if IDs are present in the selected solution
+        panel = None
+        inverter = None
+        
+        panel_id = selected.get('panel_id')
+        if panel_id:
+            panel = SolarPanel.objects.filter(pk=panel_id).first()
+            
+        inverter_id = selected.get('inverter_id')
+        if inverter_id:
+            inverter = Inverter.objects.filter(pk=inverter_id).first()
 
-        if not inverter and opt.get('pareto_solutions'):
-            sol = opt['pareto_solutions'][0]
-            if sol.get('inverter_id'):
-                from solar_data.models import Equipment
-                inverter = Equipment.objects.filter(pk=sol['inverter_id']).first()
-
-        panel_count = getattr(project, 'panel_count', None)
-        if not panel_count and opt.get('pareto_solutions'):
-            panel_count = opt['pareto_solutions'][0].get('panel_count')
+        panel_count = selected.get('panel_count')
         if not panel_count:
             panel_count = 30
 
@@ -151,7 +153,7 @@ def _load_project(project_id: str, request: Request) -> dict | None:
             'shading_loss_pct'    : float(getattr(project, 'shading_loss_pct', 3.0)),
             'optimization_results': opt,
             # Also expose pareto solutions at top-level for the PDF engine
-            'pareto_solutions'    : opt.get('pareto_solutions', []),
+            'pareto_solutions'    : pareto,
             'roof_image_path'     : getattr(project, 'annotated_roof_image_path', None),
             'company'             : company,
         }
