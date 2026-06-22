@@ -474,8 +474,8 @@ def _extract_results(project_data: dict) -> dict:
     sol = pareto[0] if pareto else {}
 
     def _pick(*keys, src=None, default=0):
-        """Pick first non-zero/non-None value from sol, then opt, then project_data."""
-        for src_dict in [sol, opt, project_data]:
+        """Pick first non-zero/non-None value from opt, then sol, then project_data."""
+        for src_dict in [opt, sol, project_data]:
             for k in keys:
                 v = src_dict.get(k)
                 if v is not None and v != 0 and v != '':
