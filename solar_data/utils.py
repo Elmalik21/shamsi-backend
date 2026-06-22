@@ -177,14 +177,15 @@ def calculate_annual_savings(
         monthly_bill_without  – full bill without solar
         monthly_bill_with     – bill with solar offset applied
     """
-    monthly_solar_kwh = annual_solar_kwh / 12.0
-    monthly_net_kwh = max(0.0, monthly_kwh_without_solar - monthly_solar_kwh)
+    tariff_price = 1.35 if usage_type == 'RESIDENTIAL' else 1.75
+    annual_saving = annual_solar_kwh * tariff_price
+    monthly_saving = annual_saving / 12.0
 
     bill_without = calculate_monthly_bill(monthly_kwh_without_solar, usage_type)
+    
+    monthly_solar_kwh = annual_solar_kwh / 12.0
+    monthly_net_kwh = max(0.0, monthly_kwh_without_solar - monthly_solar_kwh)
     bill_with = calculate_monthly_bill(monthly_net_kwh, usage_type)
-
-    monthly_saving = bill_without['total_bill_egp'] - bill_with['total_bill_egp']
-    annual_saving = monthly_saving * 12
 
     return {
         'monthly_savings_egp': round(monthly_saving, 2),
