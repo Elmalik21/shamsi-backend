@@ -255,7 +255,7 @@ class EgyptianYieldPredictor:
 
     # ── Prediction ────────────────────────────────────────────────────────────
 
-    def predict(self, features: dict) -> dict:
+    def predict(self, features: dict, system_kw: float | None = None, calculate_interval: bool = True) -> dict:
         """
         Predict annual yield for a given feature set.
 
@@ -271,7 +271,10 @@ class EgyptianYieldPredictor:
             model_r2              – model R²
             model_mape            – model MAPE %
         """
-        sys_kw = float(features.get('system_kw', 10.0))
+        if system_kw is None:
+            sys_kw = float(features.get('system_kw', 10.0))
+        else:
+            sys_kw = float(system_kw)
 
         if not self._load():
             return self._physics_estimate(features)
@@ -280,27 +283,54 @@ class EgyptianYieldPredictor:
         x = np.array([[features[f] for f in self.FEATURES]], dtype=float)
         x_s = self.scaler.transform(x)
 
-        # Tree-level predictions of specific_yield for uncertainty estimation
-        tree_preds = np.array([t.predict(x_s)[0] for t in self.model.estimators_])
-        spec_mean  = float(tree_preds.mean())
-        spec_std   = float(tree_preds.std())
-
-        # Scale to actual system size
-        annual_mean = spec_mean * sys_kw
-        annual_std  = spec_std  * sys_kw
+        if calculate_interval:
+            # Tree-level predictions of specific_yield for uncertainty estimation
+            tree_preds = np.array([t.predict(x_s)[0] for t in self.model.estimators_])
+            spec_mean  = float(tree_preds.mean())
+            spec_std   = float(tree_preds.std())
+            annual_mean = spec_mean * sys_kw
+            annual_std  = spec_std  * sys_kw
+            confidence_interval = {
+                'low':  round(max(0, annual_mean - 1.645 * annual_std), 1),
+                'high': round(annual_mean + 1.645 * annual_std, 1),
+            }
+        else:
+            spec_mean = float(self.model.predict(x_s)[0])
+            annual_mean = spec_mean * sys_kw
+            confidence_interval = {}
 
         monthly = [round(annual_mean * w, 1) for w in self._MONTHLY_WEIGHTS]
 
         return {
             'predicted_annual_kwh': round(annual_mean, 1),
             'predicted_monthly':    monthly,
-            'confidence_interval': {
-                'low':  round(max(0, annual_mean - 1.645 * annual_std), 1),
-                'high': round(annual_mean + 1.645 * annual_std, 1),
-            },
+            'confidence_interval':  confidence_interval,
             'model_r2':   round(self._model_r2 or 0.0, 4),
             'model_mape': round(self._model_mape or 0.0, 2),
         }
+
+    def predict_batch(self, features_list: list[dict], system_kw: float = 10.0) -> list[float]:
+        """
+        Predict specific yield in a highly optimized batch mode.
+        Bypasses individual validation and runs prediction for the entire batch at once.
+        """
+        if not self._load() or self.model is None or self.scaler is None:
+            # Fallback to individual physics fallback
+            return [float(self._physics_estimate(f)['predicted_annual_kwh']) for f in features_list]
+        
+        # Convert list of dicts to 2D numpy array
+        X = np.array([[f.get(feat, 0.0) for feat in self.FEATURES] for f in features_list], dtype=float)
+        X_s = self.scaler.transform(X)
+        
+        # Temporarily force n_jobs = 1 to avoid parallel process startup overhead
+        old_n_jobs = getattr(self.model, 'n_jobs', 1)
+        self.model.n_jobs = 1
+        try:
+            specific_yields = self.model.predict(X_s)
+        finally:
+            self.model.n_jobs = old_n_jobs
+            
+        return [round(float(sy * system_kw), 1) for sy in specific_yields]
 
     def _physics_estimate(self, features: dict) -> dict:
         """Pure physics fallback when model not trained."""

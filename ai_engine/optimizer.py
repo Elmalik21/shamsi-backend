@@ -44,7 +44,8 @@ class EgyptianSolarOptimizer:
     TOURNAMENT_SIZE = 2
 
     # Hard wall: never exceed this total wall-clock time (Railway 30s timeout)
-    MAX_WALL_SECONDS = 40
+    # Stop before 30s to allow response formatting and transmission.
+    MAX_WALL_SECONDS = 22
 
     def __init__(self):
         # Use Model Registry singleton if available (loaded at startup)
@@ -76,7 +77,7 @@ class EgyptianSolarOptimizer:
     def _build_yield_cache(self, context: dict) -> dict:
         """
         Pre-compute specific_yield (kWh/kWp) for every (panel_idx, tilt) pair
-        that NSGA-II will ever need.
+        that NSGA-II will ever need using highly optimized batch prediction.
 
         Without cache: 600+ RF calls per optimization run.
         With cache:    n_panels × 11 tilts ≈ 55–110 RF calls, then O(1) lookup.
@@ -91,26 +92,41 @@ class EgyptianSolarOptimizer:
         dust_factor = context['dust_zone']['factor']
         climate     = context['climate']
 
+        # Pre-build feature list
+        keys = []
+        features_list = []
         for pi, panel in enumerate(context['panels']):
             for tilt in tilts:
-                key = (pi, tilt)
+                keys.append((pi, tilt))
+                features_list.append({
+                    'avg_ghi':          climate['avg_ghi'],
+                    'avg_temperature':  climate['avg_temperature'],
+                    'max_temperature':  climate['max_temperature'],
+                    'avg_humidity':     climate['avg_humidity'],
+                    'avg_wind_speed':   climate['avg_wind_speed'],
+                    'dust_risk_score':  dust_factor,
+                    'latitude':         lat,
+                    'tilt_angle':       tilt,
+                    'panel_efficiency': panel.efficiency_pct / 100.0,
+                    'temp_coefficient': panel.temp_coefficient_pct,
+                })
+
+        try:
+            # Batch predict
+            preds = self.yield_predictor.predict_batch(features_list, system_kw=1.0)
+            for key, pred in zip(keys, preds):
+                cache[key] = pred
+        except Exception as e:
+            logger.warning("Batch prediction failed, falling back to individual loop: %s", e)
+            # Individual loop fallback
+            for key, features in zip(keys, features_list):
                 try:
-                    result = self.yield_predictor.predict({
-                        'avg_ghi':          climate['avg_ghi'],
-                        'avg_temperature':  climate['avg_temperature'],
-                        'max_temperature':  climate['max_temperature'],
-                        'avg_humidity':     climate['avg_humidity'],
-                        'avg_wind_speed':   climate['avg_wind_speed'],
-                        'dust_risk_score':  dust_factor,
-                        'latitude':         lat,
-                        'tilt_angle':       tilt,
-                        'panel_efficiency': panel.efficiency_pct / 100.0,
-                        'temp_coefficient': panel.temp_coefficient_pct,
-                    }, system_kw=1.0)
-                    # predicted_annual_kwh for 1 kWp = specific_yield
+                    result = self.yield_predictor.predict(features, system_kw=1.0, calculate_interval=False)
                     cache[key] = result['predicted_annual_kwh']
                 except Exception:
                     # physics fallback if RF unavailable
+                    pi, tilt = key
+                    panel = context['panels'][pi]
                     ghi  = climate['avg_ghi']
                     temp = climate['avg_temperature']
                     tc   = panel.temp_coefficient_pct
@@ -669,7 +685,7 @@ class EgyptianSolarOptimizer:
                 'tilt_angle':        tilt,
                 'panel_efficiency':  panel.efficiency_pct / 100.0,
                 'temp_coefficient':  panel.temp_coefficient_pct,
-            }, system_kw=sys_kw)
+            }, system_kw=sys_kw, calculate_interval=False)
 
             # Performance ratio: PR = annual_yield / (system_kWp × GHI_annual)
             # where GHI_annual = avg_ghi (kWh/m²/day) × 365
