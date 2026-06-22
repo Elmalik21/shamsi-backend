@@ -11,6 +11,9 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+_TARIFF_CACHE: dict = {}
+
+
 def calculate_monthly_bill(monthly_kwh: float, usage_type: str = 'RESIDENTIAL') -> dict:
     """
     Calculate Egyptian electricity bill using EGYPTERA August 2024 tariffs.
@@ -46,11 +49,17 @@ def calculate_monthly_bill(monthly_kwh: float, usage_type: str = 'RESIDENTIAL') 
     FLAT_TYPES = {'IRRIGATION_LV', 'OTHER_LV', 'MEDIUM_VOLTAGE',
                   'HIGH_VOLTAGE', 'EXTRA_HIGH_VOLTAGE'}
 
+    global _TARIFF_CACHE
+
     if usage_type in FLAT_TYPES:
-        rows = ElectricityTariff.objects.filter(usage_type=usage_type)
-        if not rows.exists():
+        if usage_type in _TARIFF_CACHE:
+            rows = _TARIFF_CACHE[usage_type]
+        else:
+            rows = list(ElectricityTariff.objects.filter(usage_type=usage_type))
+            _TARIFF_CACHE[usage_type] = rows
+        if not rows:
             return _zero_bill()
-        row = rows.first()
+        row = rows[0]
         energy_cost = kwh * row.price_egp_per_kwh
         fee = float(row.customer_service_fee)
         return {
@@ -68,10 +77,14 @@ def calculate_monthly_bill(monthly_kwh: float, usage_type: str = 'RESIDENTIAL') 
 
     # ── Bracket-based tariffs (RESIDENTIAL / COMMERCIAL) ─────────────────────
     # Find the bracket that contains monthly_kwh
-    all_rows = list(
-        ElectricityTariff.objects.filter(usage_type=usage_type)
-        .order_by('consumption_bracket_min', 'tier_min_kwh')
-    )
+    if usage_type in _TARIFF_CACHE:
+        all_rows = _TARIFF_CACHE[usage_type]
+    else:
+        all_rows = list(
+            ElectricityTariff.objects.filter(usage_type=usage_type)
+            .order_by('consumption_bracket_min', 'tier_min_kwh')
+        )
+        _TARIFF_CACHE[usage_type] = all_rows
     if not all_rows:
         return _zero_bill()
 
