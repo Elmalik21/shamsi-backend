@@ -178,10 +178,20 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
 
     # 3. Inverter & System Type Sizing
     inv_type = _val(inverter, 'inverter_type', default='ON_GRID')
-    is_off_grid = (inv_type == 'OFF_GRID') or bool(cfg.get('include_battery', False))
-    cfg['include_battery'] = is_off_grid
-    system_type_str = "Off-Grid Solar System (with Battery Storage)" if is_off_grid else "Grid-Tied Solar System (On-Grid, No Battery)"
+    is_off_grid = (inv_type == 'OFF_GRID')
+    is_hybrid = (inv_type == 'HYBRID')
+    include_battery = is_off_grid or is_hybrid or bool(cfg.get('include_battery', False))
+    cfg['include_battery'] = include_battery
+
+    if is_off_grid:
+        system_type_str = "Off-Grid Solar System"
+    elif is_hybrid:
+        system_type_str = "Hybrid Solar System"
+    else:
+        system_type_str = "Grid-Tied Solar System"
+
     project_data['system_type_str'] = system_type_str
+    project_data['system_type'] = inv_type
 
     # 4. PVWatts-like Physical Production Simulator
     monthly_ghi = [0.0] * 12
@@ -252,16 +262,35 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
                 monthly_yield[m] += daily_yield
                 monthly_poa[m] += poa_d
 
-    # Averages
+    # Averages, yields, and climate normalization
+    days_in_month = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31]
     avg_ghi_daily = 0.0
     for m in range(12):
         n = max(1, monthly_cnt[m])
+        # Normalize monthly yields to a single-year average (scale by expected days in month / count of records)
+        monthly_yield[m] = monthly_yield[m] * (days_in_month[m] / n)
+        
+        # Normalize climate variables to represent daily averages
         monthly_temp[m] = monthly_temp[m] / n
-        avg_ghi_daily += (monthly_ghi[m] / n)
+        monthly_ghi[m] = monthly_ghi[m] / n
+        monthly_poa[m] = monthly_poa[m] / n
+
+        # 4.5. Validate climate/irradiance values for physical realism in Egypt
+        if not (1.0 <= monthly_ghi[m] <= 10.0):
+            monthly_ghi[m] = max(1.0, min(monthly_ghi[m], 10.0))
+        if not (1.0 <= monthly_poa[m] <= 12.0):
+            monthly_poa[m] = max(1.0, min(monthly_poa[m], 12.0))
+        if not (-10.0 <= monthly_temp[m] <= 60.0):
+            monthly_temp[m] = max(-10.0, min(monthly_temp[m], 60.0))
+
+        avg_ghi_daily += monthly_ghi[m]
+        
     avg_ghi_daily /= 12.0
 
     annual_yield_kwh = sum(monthly_yield)
-    annual_poa = sum(monthly_poa)
+    
+    # Calculate single-year annual POA
+    annual_poa = sum(monthly_poa[m] * days_in_month[m] for m in range(12))
     
     # Calculate performance ratio
     annual_pr = annual_yield_kwh / (annual_poa * system_kw) if (annual_poa and system_kw) else 0.80
@@ -410,6 +439,19 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
     if not is_off_grid and inv_type == 'OFF_GRID':
         warnings.append("System/Inverter Inconsistency: Grid-tied design is using an OFF_GRID inverter classification. Verify battery battery backup settings.")
         
+    compliance_metrics = {
+        'dc_ac_ratio': dc_ac_ratio,
+        'cold_voc': string_voc_cold,
+        'max_dc_v': max_dc_v,
+        'hot_vmp': string_vmp_hot,
+        'mppt_min_v': mppt_min_v,
+        'mppt_max_v': mppt_max_v,
+        'stc_vmp': string_vmp,
+        't_min': t_min,
+        't_max': t_max,
+    }
+    project_data['compliance_metrics'] = compliance_metrics
+
     project_data['warnings'] = warnings
     project_data['system_kw'] = system_kw
     project_data['panel_count'] = panel_count

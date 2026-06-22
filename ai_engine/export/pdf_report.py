@@ -358,10 +358,11 @@ class _HeaderFooter:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _build_system_diagram(system_kw: float, panel_count: int,
-                           inverter_kw: float = 0) -> Drawing:
+                           inverter_kw: float = 0, system_type: str = 'ON_GRID') -> Drawing:
     """
-    Draw a detailed PV system single-line diagram (SLD):
-    PV Array -> DC Fuses -> DC Breaker & SPD -> Inverter -> AC MCB & SPD -> Main DB -> Grid / Load
+    Draw a detailed PV system single-line diagram (SLD) dynamically based on topology:
+    PV Array -> DC Fuses -> DC Breaker & SPD -> Inverter -> AC MCB & SPD -> Main DB -> (Grid and/or Load)
+    If OFF_GRID or HYBRID, also draw battery bank connected below the inverter.
     """
     W = 170 * mm
     H = 48  * mm
@@ -389,7 +390,7 @@ def _build_system_diagram(system_kw: float, panel_count: int,
     # 1. PV Array
     kw_label = f'{system_kw:.2f} kWp' if system_kw else ''
     panels_label = f'{panel_count} modules' if panel_count else ''
-    _box(5*mm, mid_y - 9*mm, 26*mm, 18*mm, 'PV ARRAY', f'{kw_label}\n{panels_label}'.replace('\n', ' '))
+    _box(5*mm, mid_y - 9*mm, 26*mm, 18*mm, 'PV ARRAY', f'{kw_label} {panels_label}')
 
     # Connection line PV -> Fuses
     d.add(Line(31*mm, mid_y, 40*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
@@ -407,9 +408,25 @@ def _build_system_diagram(system_kw: float, panel_count: int,
     d.add(Line(84*mm, mid_y, 93*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
     d.add(String(88.5*mm, mid_y + 1.5*mm, 'DC', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='middle', fillColor=colors.HexColor(C_MUTED)))
 
-    # 4. Inverter
-    inv_label = f'{inverter_kw:.1f} kW AC' if inverter_kw else 'DC/AC'
-    _box(93*mm, mid_y - 9*mm, 24*mm, 18*mm, 'INVERTER', inv_label)
+    # 4. Inverter Box based on topology
+    if system_type == 'OFF_GRID':
+        inv_title = 'OFF-GRID INV'
+        inv_sub = f'{inverter_kw:.1f} kW AC' if inverter_kw else 'Charger/Inv'
+    elif system_type == 'HYBRID':
+        inv_title = 'HYBRID INV'
+        inv_sub = f'{inverter_kw:.1f} kW AC' if inverter_kw else 'Bi-Dir Inv'
+    else:
+        inv_title = 'GRID-TIE INV'
+        inv_sub = f'{inverter_kw:.1f} kW AC' if inverter_kw else 'DC/AC Inv'
+
+    _box(93*mm, mid_y - 9*mm, 24*mm, 18*mm, inv_title, inv_sub)
+
+    # Battery connection for OFF_GRID and HYBRID
+    if system_type in ('OFF_GRID', 'HYBRID'):
+        # Vertical connection line
+        d.add(Line(105*mm, mid_y - 9*mm, 105*mm, 2*mm + 9*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
+        # Battery block
+        _box(93*mm, 2*mm, 24*mm, 9*mm, 'BATTERY BANK', '48V Storage', bg_color='#ecfeff')
 
     # Line Inverter -> AC MCB
     d.add(Line(117*mm, mid_y, 124*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
@@ -421,18 +438,19 @@ def _build_system_diagram(system_kw: float, panel_count: int,
     # Line AC MCB -> Main DB
     d.add(Line(144*mm, mid_y, 149*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.2))
 
-    # 6. Main DB (MDB)
-    _box(149*mm, mid_y - 8*mm, 16*mm, 16*mm, 'MAIN DB', 'Utility MDB')
-
-    # Lines from MDB to Grid and Load
-    # Vertical line at 165 mm
-    split_x = 165*mm
-    d.add(Line(165*mm, mid_y, 169*mm, mid_y + 8*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
-    d.add(Line(165*mm, mid_y, 169*mm, mid_y - 8*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
-
-    # Arrow tips / destinations
-    d.add(String(169*mm, mid_y + 10*mm, 'To Grid', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
-    d.add(String(169*mm, mid_y - 12*mm, 'To Load', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
+    # 6. Main DB / Net Meter
+    if system_type == 'OFF_GRID':
+        _box(149*mm, mid_y - 8*mm, 16*mm, 16*mm, 'LOAD DB', 'AC Load DB')
+        # Line from DB to Load only
+        d.add(Line(165*mm, mid_y, 169*mm, mid_y, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
+        d.add(String(169*mm, mid_y - 2*mm, 'To Load', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
+    else:
+        _box(149*mm, mid_y - 8*mm, 16*mm, 16*mm, 'NET METER', 'Utility DB')
+        # Lines from MDB to Grid and Load
+        d.add(Line(165*mm, mid_y, 169*mm, mid_y + 8*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
+        d.add(Line(165*mm, mid_y, 169*mm, mid_y - 8*mm, strokeColor=colors.HexColor(C_DARK), strokeWidth=1.0))
+        d.add(String(169*mm, mid_y + 10*mm, 'To Grid', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
+        d.add(String(169*mm, mid_y - 12*mm, 'To Load', fontSize=5.5, fontName='Helvetica-Bold', textAnchor='start', fillColor=colors.HexColor(C_DARK)))
 
     return d
 
@@ -589,9 +607,52 @@ class ProfessionalPDFReport:
 
     # ─── Public API ───────────────────────────────────────────────────────────
 
+    def _validate_report_consistency(self) -> None:
+        """
+        Verify that:
+        - System type is consistent across all report sections.
+        - SLD topology matches the selected system type.
+        - No contradictory statements exist.
+        - Irradiance units match the exported data.
+        - Engineering compliance values are present and valid.
+        Raises ValueError if any critical inconsistencies are found.
+        """
+        sys_type = self.project.get('system_type', 'ON_GRID')
+        sys_type_str = self.project.get('system_type_str', '')
+
+        # 1. System type consistency checks
+        if sys_type == 'OFF_GRID' and 'off-grid' not in sys_type_str.lower():
+            raise ValueError(f"Consistency Error: System type code is OFF_GRID but type description is '{sys_type_str}'")
+        if sys_type == 'ON_GRID' and 'grid-tied' not in sys_type_str.lower():
+            raise ValueError(f"Consistency Error: System type code is ON_GRID but type description is '{sys_type_str}'")
+        if sys_type == 'HYBRID' and 'hybrid' not in sys_type_str.lower():
+            raise ValueError(f"Consistency Error: System type code is HYBRID but type description is '{sys_type_str}'")
+
+        # 2. Irradiance values/units validation for physical average range (1.0 to 10.0 kWh/m²/day in Egypt)
+        m_ghi = self.project.get('monthly_ghi') or []
+        if m_ghi:
+            for ghi_val in m_ghi:
+                if ghi_val > 15.0 or ghi_val < 0.1:
+                    raise ValueError(f"Consistency Error: GHI value {ghi_val:.2f} is out of realistic daily average bounds (0.1 - 15.0). Verify units are not monthly totals.")
+
+        m_poa = self.project.get('monthly_poa') or []
+        if m_poa:
+            for poa_val in m_poa:
+                if poa_val > 18.0 or poa_val < 0.1:
+                    raise ValueError(f"Consistency Error: POA value {poa_val:.2f} is out of realistic daily average bounds (0.1 - 18.0).")
+
+        # 3. Engineering compliance metrics verification
+        metrics = self.project.get('compliance_metrics') or {}
+        required_keys = ['dc_ac_ratio', 'cold_voc', 'max_dc_v', 'hot_vmp', 'mppt_min_v', 'mppt_max_v', 'stc_vmp']
+        for key in required_keys:
+            if key not in metrics or metrics[key] is None or metrics[key] <= 0:
+                raise ValueError(f"Consistency Error: Required engineering metric '{key}' is missing or invalid in compliance metrics.")
+
     def generate_report(self, output_file: str) -> str:
         if not REPORTLAB_AVAILABLE:
             raise ImportError(f"reportlab not installed or failed to import. Detail: {REPORTLAB_ERROR}")
+
+        self._validate_report_consistency()
 
         Path(output_file).parent.mkdir(parents=True, exist_ok=True)
 
@@ -711,6 +772,7 @@ class ProfessionalPDFReport:
 
         info_rows = [
             ['Site / Location',      loc_name],
+            ['System Type',          self.project.get('system_type_str', 'Grid-Tied Solar System')],
             ['Coordinates',          f'{lat:.4f}°N,  {lon:.4f}°E'],
             ['System Peak Capacity', _fmt(self.system_kw, 2, ' kWp',
                                          f'{self.system_kw:.2f} kWp') if self.system_kw else '—'],
@@ -786,8 +848,9 @@ class ProfessionalPDFReport:
         elements.append(HRFlowable(width='100%', thickness=1.5, color=colors.HexColor(C_RULE)))
         elements.append(Paragraph('Executive Summary', styles['SectionHeader']))
 
+        sys_name = self.project.get('system_type_str', 'Grid-Tied Solar System').lower()
         narrative = (
-            f'The proposed grid-tied solar photovoltaic system for <b>{loc_name}</b> '
+            f'The proposed {sys_name} for <b>{loc_name}</b> '
             f'has a rated peak capacity of <b>{self.system_kw:.2f} kWp</b>, comprising '
             f'<b>{self.panel_count}</b> modules of <b>{panel_desc}</b>. '
         )
@@ -1038,7 +1101,7 @@ class ProfessionalPDFReport:
 
         # ── Block Diagram ────────────────────────────────────────────────────
         elements.append(Paragraph('Detailed Single-Line Schematic', styles['SubHeader']))
-        diag = _build_system_diagram(self.system_kw, self.panel_count, inv_kw * inv_count)
+        diag = _build_system_diagram(self.system_kw, self.panel_count, inv_kw * inv_count, self.project.get('system_type', 'ON_GRID'))
         elements.append(diag)
         elements.append(Spacer(1, 1*mm))
         elements.append(Paragraph(
@@ -1256,19 +1319,103 @@ class ProfessionalPDFReport:
 
     def _warnings_page(self, styles) -> list:
         warnings = self.project.get('warnings') or []
+        sys_type = self.project.get('system_type', 'ON_GRID')
+        sys_type_label = "Off-Grid" if sys_type == 'OFF_GRID' else ("Hybrid" if sys_type == 'HYBRID' else "Grid-Tied")
 
         elements = [Paragraph('SECTION 5.1 — ENGINEERING COMPLIANCE &amp; WARNINGS', styles['SectionNumber'])]
         elements.append(HRFlowable(width='100%', thickness=1.5, color=colors.HexColor(C_RULE)))
         elements.append(Paragraph('Engineering Compliance &amp; Warnings', styles['SectionHeader']))
 
+        if sys_type == 'OFF_GRID':
+            topology_rule_txt = "and inverter/battery charging coordination rules."
+        else:
+            topology_rule_txt = "and inverter compatibility with regulatory grid-tied rules."
+
         intro_text = (
-            "This section presents the results of the automated engineering rule-checks "
-            "and electrical code compliance validations. Sizing validations assess inverter DC/AC ratio, "
-            "string open-circuit voltage at low ambient temperature (cold Voc limit), MPPT operating voltage "
-            "under hot cell temperatures (hot Vmp limit), and inverter compatibility with regulatory grid-tied rules."
+            f"This section presents the results of the automated engineering rule-checks "
+            f"and electrical code compliance validations. Sizing validations assess inverter DC/AC ratio, "
+            f"string open-circuit voltage at low ambient temperature (cold Voc limit), MPPT operating voltage "
+            f"under hot cell temperatures (hot Vmp limit), {topology_rule_txt}"
         )
         elements.append(Paragraph(intro_text, styles['BodyText']))
         elements.append(Spacer(1, 4*mm))
+
+        # Retrieve compliance metrics with inline fallbacks
+        metrics = self.project.get('compliance_metrics') or {}
+        
+        # DC/AC ratio
+        dc_ac = metrics.get('dc_ac_ratio')
+        if dc_ac is None:
+            p_power = float(_safe(self.panel, 'power_rating_w', default=580.0))
+            inv_kw = float(_safe(self.inverter, 'power_rating_w', default=10000.0) / 1000.0)
+            inv_count = int(self.config.get('inverter_count') or 1)
+            dc_ac = (self.panel_count * p_power / 1000.0) / (inv_kw * inv_count) if (inv_kw and inv_count) else 1.15
+
+        cold_voc = metrics.get('cold_voc') or 350.0
+        max_dc_v = metrics.get('max_dc_v') or 1000.0
+        hot_vmp = metrics.get('hot_vmp') or 280.0
+        mppt_min_v = metrics.get('mppt_min_v') or 200.0
+        mppt_max_v = metrics.get('mppt_max_v') or 950.0
+        stc_vmp = metrics.get('stc_vmp') or 420.0
+        t_min = metrics.get('t_min') or 5.0
+        t_max = metrics.get('t_max') or 70.0
+
+        topo_status = "<font color='#ef4444'>✗ FAIL</font>" if any("Inconsistency" in w for w in warnings) else "<font color='#22c55e'>✓ PASS</font>"
+
+        comp_rows = [
+            ['Engineering Sizing Check', 'Calculated Value', 'Design Limit / Target', 'Status'],
+            [
+                'DC/AC Capacity Ratio',
+                f'{dc_ac:.2f}',
+                '1.00 – 1.35',
+                "<font color='#22c55e'>✓ PASS</font>" if (1.0 <= dc_ac <= 1.35) else "<font color='#f59e0b'>⚠ WARN</font>"
+            ],
+            [
+                'Cold-Condition String Voc',
+                f'{cold_voc:.1f} V (at {t_min:.1f}°C)',
+                f'< {max_dc_v:.0f} V (Inverter Max)',
+                "<font color='#22c55e'>✓ PASS</font>" if (cold_voc < max_dc_v) else "<font color='#ef4444'>✗ FAIL</font>"
+            ],
+            [
+                'Hot-Condition String Vmp',
+                f'{hot_vmp:.1f} V (at {t_max:.1f}°C)',
+                f'> {mppt_min_v:.0f} V (MPPT Min)',
+                "<font color='#22c55e'>✓ PASS</font>" if (hot_vmp >= mppt_min_v) else "<font color='#f59e0b'>⚠ WARN</font>"
+            ],
+            [
+                'STC String Vmp',
+                f'{stc_vmp:.1f} V (at 25°C)',
+                f'< {mppt_max_v:.0f} V (MPPT Max)',
+                "<font color='#22c55e'>✓ PASS</font>" if (stc_vmp <= mppt_max_v) else "<font color='#f59e0b'>⚠ WARN</font>"
+            ],
+            [
+                'System Topology Match',
+                sys_type_label,
+                'Inverter matches topology',
+                topo_status
+            ]
+        ]
+        
+        comp_tbl = Table(comp_rows, colWidths=[65*mm, 45*mm, 40*mm, 20*mm])
+        comp_tbl.setStyle(TableStyle([
+            ('BACKGROUND',    (0, 0), (-1, 0),   colors.HexColor(C_HEADER_BG)),
+            ('TEXTCOLOR',     (0, 0), (-1, 0),   colors.white),
+            ('FONTNAME',      (0, 0), (-1, 0),   'Helvetica-Bold'),
+            ('FONTSIZE',      (0, 0), (-1, -1),  8.0),
+            ('ALIGN',         (0, 0), (0, -1),   'LEFT'),
+            ('ALIGN',         (1, 0), (-1, -1),  'RIGHT'),
+            ('ROWBACKGROUNDS',(0, 1), (-1, -1),
+             [colors.HexColor(C_ROW_EVEN), colors.HexColor(C_ROW_ODD)]),
+            ('GRID',          (0, 0), (-1, -1),  0.5, colors.HexColor(C_BORDER)),
+            ('TOPPADDING',    (0, 0), (-1, -1),  4),
+            ('BOTTOMPADDING', (0, 0), (-1, -1),  4),
+            ('LEFTPADDING',   (0, 0), (-1, -1),  6),
+            ('RIGHTPADDING',  (0, 0), (-1, -1),  6),
+        ]))
+        
+        elements.append(Paragraph('<b>Verification Metrics &amp; Limits</b>', styles['SubHeader']))
+        elements.append(comp_tbl)
+        elements.append(Spacer(1, 5*mm))
 
         if warnings:
             elements.append(Paragraph('<b>Detected Sizing Violations &amp; Engineering Warnings</b>', styles['SubHeader']))
@@ -1295,13 +1442,14 @@ class ProfessionalPDFReport:
                 elements.append(tbl)
                 elements.append(Spacer(1, 4*mm))
         else:
+            topo_desc = "off-grid battery backup fully configured" if sys_type == 'OFF_GRID' else "no battery/grid mismatch detected"
             comp_txt = (
                 "<b>System Sizing Status: COMPLIANT</b><br/><br/>"
                 "The solar PV engineering design fully complies with standard sizing rules and regulatory requirements:<br/>"
                 "• <b>DC/AC Ratio</b>: Validated within the optimal engineering window (1.00 – 1.35) preventing underutilization or excessive clipping.<br/>"
                 "• <b>Voltage Sizing (Cold Voc)</b>: Open-circuit voltage remains safely below the inverter's maximum input DC rating under worst-case winter temperatures.<br/>"
                 "• <b>Voltage Sizing (Hot MPPT)</b>: MPPT operating voltage remains within the tracker's voltage window at hot operating conditions, ensuring maximum conversion efficiency.<br/>"
-                "• <b>System Topology</b>: Inverter and system configuration are fully consistent (no battery/grid mismatch detected)."
+                f"• <b>System Topology</b>: Inverter and system configuration are fully consistent ({topo_desc})."
             )
             tbl_data = [[Paragraph(comp_txt, styles['BodyText'])]]
             tbl = Table(tbl_data, colWidths=[170*mm])
@@ -1317,11 +1465,40 @@ class ProfessionalPDFReport:
             elements.append(Spacer(1, 6*mm))
 
         elements.append(Paragraph('<b>General Design Recommendations</b>', styles['SubHeader']))
+        
+        cz = self.project.get('climate_zone', 'Nile Delta & Greater Cairo — Semi-Arid')
+        is_desert = 'desert' in cz.lower() or 'arid' in cz.lower()
+        is_coast = 'coast' in cz.lower() or 'humid' in cz.lower()
+
+        if is_desert:
+            soiling_advice = (
+                "The site is located in a high-soiling desert region. Sand accumulation "
+                "is severe. We recommend a strict <b>monthly cleaning schedule</b> "
+                "to prevent excessive performance degradation."
+            )
+        elif is_coast:
+            soiling_advice = (
+                "The site is located in a humid coastal region. Soiling risk is low due to "
+                "higher humidity and seasonal rain. A <b>semi-annual cleaning schedule</b> "
+                "is sufficient to maintain the array yield."
+            )
+        else:
+            soiling_advice = (
+                "The site is located in a semi-arid urban/delta region. Soiling risk is moderate due to "
+                "urban dust accumulation. A <b>quarterly cleaning schedule</b> (every 3 months) "
+                "is recommended."
+            )
+
+        if sys_type == 'OFF_GRID':
+            safety_rules_label = "local off-grid electrical safety standards"
+        else:
+            safety_rules_label = "EGYPTERA and EEHC rules"
+
         rec_text = (
             "1. <b>DC Cable Sizing</b>: Use the specified PV1-F solar cable to limit voltage drop to &lt; 1.5% as per IEC 60364-7-712 rules.<br/>"
-            "2. <b>Electrical Protection</b>: Ensure all recommended DC fuses, AC/DC surge protection devices (SPDs), and circuit breakers are installed at their respective points to guarantee safety and compliance with EGYPTERA and EEHC rules.<br/>"
-            "3. <b>Soiling/Dust Maintenance</b>: The site location suffers from dust deposition. Implementing a regular quarterly washing schedule (water wash) is highly recommended to maintain solar yield and avoid additional soiling losses.<br/>"
-            "4. <b>Inverter Placement</b>: Install the inverter in a shaded, well-ventilated location. Egypt's ambient summer temperatures can trigger thermal derating in the inverter if exposed to direct sunlight."
+            f"2. <b>Electrical Protection</b>: Ensure all recommended DC fuses, AC/DC surge protection devices (SPDs), and circuit breakers are installed at their respective points to guarantee safety and compliance with {safety_rules_label}.<br/>"
+            f"3. <b>Soiling &amp; Dust Maintenance</b>: {soiling_advice}<br/>"
+            "4. <b>Inverter Placement</b>: Install the inverter in a shaded, well-ventilated location. Egypt's summer temperatures can trigger thermal derating in the inverter if exposed to direct sunlight."
         )
         elements.append(Paragraph(rec_text, styles['BodyText']))
 
@@ -1334,22 +1511,51 @@ class ProfessionalPDFReport:
         elements.append(HRFlowable(width='100%', thickness=1.5, color=colors.HexColor(C_RULE)))
         elements.append(Paragraph('Technical Appendix &amp; Standards', styles['SectionHeader']))
 
+        cz = self.project.get('climate_zone', 'Nile Delta & Greater Cairo — Semi-Arid')
+        is_desert = 'desert' in cz.lower() or 'arid' in cz.lower()
+        is_coast = 'coast' in cz.lower() or 'humid' in cz.lower()
+
+        if is_desert:
+            cleaning_freq = 'Monthly'
+            cleaning_notes = 'High soiling zone (desert sand deposition)'
+        elif is_coast:
+            cleaning_freq = 'Semi-annually'
+            cleaning_notes = 'Low soiling zone (coastal humidity cleaning)'
+        else:
+            cleaning_freq = 'Quarterly'
+            cleaning_notes = 'Moderate soiling zone (urban/delta dust)'
+
         # System Loss Budget
         elements.append(Paragraph('System Loss Budget', styles['SubHeader']))
         dust = float(self.results.get('dust_loss_pct') or 5.0)
+        sys_type = self.project.get('system_type', 'ON_GRID')
+        
+        # Base loss rows
         loss_rows = [
             ['Loss Type',                    'Est. Loss (%)', 'Basis / Notes'],
-            ['Dust &amp; Soiling',           f'{dust:.1f}%',  'Egypt desert — seasonal washing recommended'],
+            ['Dust &amp; Soiling',           f'{dust:.1f}%',  f'{cz} zone — {cleaning_freq.lower()} wash'],
             ['DC Wiring (Ohmic)',            '2.0%',  'IEC 60364-7-712 sizing'],
             ['Module Mismatch',              '2.0%',  'STC power binning ± 3%'],
             ['Inverter (operating point)',   '1.6%',  'Euro-efficiency weighted curve'],
-            ['AC Grid Connection',           '0.5%',  'Transformer &amp; metering losses'],
+        ]
+        
+        # Dynamic battery/grid loss row
+        if sys_type == 'OFF_GRID':
+            loss_rows.append(['Battery Storage (Round-Trip)', '10.0%', 'Chemical storage conversion losses'])
+        elif sys_type == 'HYBRID':
+            loss_rows.append(['Battery Storage (Round-Trip)', '5.0%', 'Lithium battery round-trip losses'])
+            loss_rows.append(['AC Grid Connection',           '0.5%', 'Transformer &amp; metering losses'])
+        else:
+            loss_rows.append(['AC Grid Connection',           '0.5%', 'Transformer &amp; metering losses'])
+            
+        loss_rows += [
             ['Far-Horizon Shading',          '3.0%',  'Conservative estimate'],
             ['Light-Induced Degradation',    '1.5%',  'First 200 kWh operational hours'],
             ['Annual Degradation (avg)',     '0.5%',  '25-yr avg → 87.5% remaining at EOL'],
             ['Temperature Derating',         '3–5%',  'Summer peak; Tmod ~ 60–70°C'],
             ['Total System Losses (est.)',   '~15–18%','Combined non-additive; PR ≈ 80–85%'],
         ]
+        
         loss_tbl = Table(loss_rows, colWidths=[70*mm, 30*mm, 70*mm])
         loss_tbl.setStyle(_three_col_table_style())
         elements.append(loss_tbl)
@@ -1379,14 +1585,38 @@ class ProfessionalPDFReport:
             ['Standard / Code',         'Title &amp; Scope'],
             ['IEC 61215',               'PV module — design qualification &amp; type approval'],
             ['IEC 61730',               'PV module safety qualification requirements'],
-            ['IEC 62109-1 / -2',        'Inverter safety — general / grid-connected'],
-            ['IEC 60364-7-712',         'DC wiring sizing &amp; protection (PV installations)'],
-            ['IEC 62548',               'PV array design requirements'],
-            ['Egyptian ESC-A (EEHC)',   'Grid-tie connection &amp; net metering — Egypt'],
-            ['IEEE 1547-2018',          'Standard for interconnection to area EPS'],
-            ['IEC 61683',               'Inverter power conversion efficiency measurement'],
-            ['EGYPTERA Decree 2019',    'Technical conditions for renewable energy connection'],
         ]
+        if sys_type == 'OFF_GRID':
+            std_rows += [
+                ['IEC 62109-1 / -2',        'Inverter/charger safety — general requirements'],
+                ['IEC 60364-7-712',         'DC wiring sizing &amp; protection (PV installations)'],
+                ['IEC 62548',               'PV array design requirements'],
+                ['IEC 62619',               'Secondary cells/batteries safety (industrial applications)'],
+                ['IEC 61427-1',             'Secondary cells/batteries for PV energy systems'],
+                ['IEC 62124',               'PV stand-alone systems — design verification'],
+                ['IEC 61683',               'Inverter power conversion efficiency measurement'],
+            ]
+        elif sys_type == 'HYBRID':
+            std_rows += [
+                ['IEC 62109-1 / -2',        'Inverter safety — general / grid-connected / battery'],
+                ['IEC 60364-7-712',         'DC wiring sizing &amp; protection (PV installations)'],
+                ['IEC 62548',               'PV array design requirements'],
+                ['IEC 62619',               'Secondary cells/batteries safety (industrial applications)'],
+                ['Egyptian ESC-A (EEHC)',   'Grid-tie connection &amp; net metering — Egypt'],
+                ['IEEE 1547-2018',          'Standard for interconnection to area EPS'],
+                ['EGYPTERA Decree 2019',    'Technical conditions for renewable energy connection'],
+            ]
+        else:  # ON_GRID
+            std_rows += [
+                ['IEC 62109-1 / -2',        'Inverter safety — general / grid-connected'],
+                ['IEC 60364-7-712',         'DC wiring sizing &amp; protection (PV installations)'],
+                ['IEC 62548',               'PV array design requirements'],
+                ['Egyptian ESC-A (EEHC)',   'Grid-tie connection &amp; net metering — Egypt'],
+                ['IEEE 1547-2018',          'Standard for interconnection to area EPS'],
+                ['IEC 61683',               'Inverter power conversion efficiency measurement'],
+                ['EGYPTERA Decree 2019',    'Technical conditions for renewable energy connection'],
+            ]
+            
         std_tbl = Table(std_rows, colWidths=[60*mm, 110*mm])
         std_tbl.setStyle(_spec_table_style())
         elements.append(std_tbl)
@@ -1396,7 +1626,7 @@ class ProfessionalPDFReport:
         elements.append(Paragraph('Operation &amp; Maintenance Recommendations', styles['SubHeader']))
         om_rows = [
             ['Activity',                       'Frequency',     'Notes'],
-            ['Module cleaning (water wash)',   'Quarterly',      'More freq. in desert locations'],
+            ['Module cleaning (water wash)',   cleaning_freq,    cleaning_notes],
             ['String IV curve check',          'Semi-annually',  'Detect shading / cell failure'],
             ['Inverter firmware update',       'Annually',       'Via manufacturer portal'],
             ['DC/AC disconnect test',          'Annually',       'Safety compliance'],

@@ -877,10 +877,10 @@ class ExcelExporter:
         for i, m_name in enumerate(self.MONTHS):
             row     = i + 4
             days    = days_in_month[i]
-            avg_ghi = m_ghi[i] / days if m_ghi[i] > 0 else 0.0
-            avg_poa = m_poa[i] / days if m_poa[i] > 0 else 0.0
+            avg_ghi = m_ghi[i]
+            avg_poa = m_poa[i]
             avg_t   = m_temp[i]
-            mon_ghi = m_ghi[i]
+            mon_ghi = m_ghi[i] * days
             ri      = avg_ghi / 6.5
 
             if ri >= 0.80:
