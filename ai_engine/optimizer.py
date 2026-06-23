@@ -123,6 +123,7 @@ class EgyptianSolarOptimizer:
                 try:
                     result = self.yield_predictor.predict(features, system_kw=1.0, calculate_interval=False)
                     cache[key] = result['predicted_annual_kwh']
+                except Exception:
                     # physics fallback if RF unavailable
                     from ai_engine.export.calc_engine import transpose_irradiance
                     pi, tilt = key
