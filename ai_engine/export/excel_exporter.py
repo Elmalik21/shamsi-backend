@@ -449,7 +449,7 @@ class ExcelExporter:
             ('Cost per Watt',         "=E6/(B6*1000)"),
             ('Simple Payback',        "=E6/'Financial Analysis'!D5"),
             ('25-Year Net Savings',   "='Financial Analysis'!F29"),
-            ('CO₂ Avoided / Year',    "=E4*0.47/1000"),
+            ('CO₂ Avoided / Year',    "=E4*0.48/1000"),
         ]
         for label, value in right_kpis:
             _kpi_block(ws, row, label, value, label_col=4)
@@ -746,7 +746,7 @@ class ExcelExporter:
             ('Simple Payback',          "=B32/D5"),
             ('25-Year Gross Savings',   "=SUM(D5:D29)"),
             ('25-Year Net Savings',     "=F29"),
-            ('CO₂ Offset (25 yr)',      "=SUM(B5:B29)*0.47/1000"),
+            ('CO₂ Offset (25 yr)',      "=SUM(B5:B29)*0.48/1000"),
         ]
         for i, (label, value) in enumerate(kpis):
             r = kpi_row + 1 + i

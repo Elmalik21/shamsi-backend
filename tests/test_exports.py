@@ -342,7 +342,9 @@ class TestPDFReport(unittest.TestCase):
             self.skipTest('reportlab not installed')
 
         from ai_engine.export.pdf_report import ProfessionalPDFReport
+        from ai_engine.export.calc_engine import normalize_and_validate_project
         project = make_synthetic_project('Cairo')
+        project = normalize_and_validate_project(project)
 
         with tempfile.NamedTemporaryFile(suffix='.pdf', delete=False) as f:
             path = f.name
@@ -364,7 +366,9 @@ class TestPDFReport(unittest.TestCase):
             self.skipTest('reportlab not installed')
 
         from ai_engine.export.pdf_report import ProfessionalPDFReport
+        from ai_engine.export.calc_engine import normalize_and_validate_project
         project = make_synthetic_project('Aswan')
+        project = normalize_and_validate_project(project)
         project['roof_analysis'] = {
             'roof_area_m2'     : 200.0,
             'usable_area_m2'   : 185.0,
@@ -423,7 +427,9 @@ class TestExcelExporter(unittest.TestCase):
             self.skipTest('openpyxl not installed')
 
         from ai_engine.export.excel_exporter import ExcelExporter
+        from ai_engine.export.calc_engine import normalize_and_validate_project
         project = make_synthetic_project('Cairo')
+        project = normalize_and_validate_project(project)
 
         with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as f:
             path = f.name
@@ -447,9 +453,11 @@ class TestExcelExporter(unittest.TestCase):
             self.skipTest('openpyxl not installed')
 
         from ai_engine.export.excel_exporter import ExcelExporter
+        from ai_engine.export.calc_engine import normalize_and_validate_project
         import openpyxl
 
         project = make_synthetic_project('Cairo')
+        project = normalize_and_validate_project(project)
         with tempfile.NamedTemporaryFile(suffix='.xlsx', delete=False) as f:
             path = f.name
         try:

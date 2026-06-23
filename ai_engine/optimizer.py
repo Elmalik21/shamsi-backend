@@ -123,15 +123,19 @@ class EgyptianSolarOptimizer:
                 try:
                     result = self.yield_predictor.predict(features, system_kw=1.0, calculate_interval=False)
                     cache[key] = result['predicted_annual_kwh']
-                except Exception:
                     # physics fallback if RF unavailable
+                    from ai_engine.export.calc_engine import transpose_irradiance
                     pi, tilt = key
                     panel = context['panels'][pi]
                     ghi  = climate['avg_ghi']
                     temp = climate['avg_temperature']
                     tc   = panel.temp_coefficient_pct
                     tl   = max(0.0, (temp - 25) * abs(tc) * 0.01)
-                    cache[key] = ghi * 365 * 0.86 * (1 - tl) * (1 - dust_factor)
+                    lat  = context['location']['latitude']
+                    # Calculate transposed POA factor using 12 representative days
+                    representative_days = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+                    poa_factor = sum(transpose_irradiance(1.0, doy, lat, tilt) for doy in representative_days) / 12.0
+                    cache[key] = ghi * poa_factor * 365 * 0.86 * (1 - tl) * (1 - dust_factor)
 
         logger.debug(
             "Yield cache built: %d entries for %d panels × %d tilts",
@@ -169,12 +173,17 @@ class EgyptianSolarOptimizer:
 
         if specific_yield is None:
             # Absolute fallback — physics formula
+            from ai_engine.export.calc_engine import transpose_irradiance
             c  = context['climate']
             d  = context['dust_zone']['factor']
             tc = panel.temp_coefficient_pct
             tl = max(0.0, (c['avg_temperature'] - 25) * abs(tc) * 0.01)
+            # Calculate transposed POA factor using 12 representative days
+            lat = context['location']['latitude']
+            representative_days = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+            poa_factor = sum(transpose_irradiance(1.0, doy, lat, tilt) for doy in representative_days) / 12.0
             # PR = (1 - temp_loss) * (1 - dust_loss) * (1 - other_system_losses). Let's assume other system losses ~ 14% (so we multiply by 0.86)
-            specific_yield = c['avg_ghi'] * 365 * (1 - tl) * (1 - d) * 0.86
+            specific_yield = c['avg_ghi'] * poa_factor * 365 * (1 - tl) * (1 - d) * 0.86
 
         base_yield   = specific_yield * sys_kw
         shading_loss = context['site']['shading_loss_pct'] / 100.0

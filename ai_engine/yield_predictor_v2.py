@@ -108,6 +108,7 @@ class EgyptianYieldPredictorV2:
         from solar_data.models import Location, DailyClimateData
         from django.db.models import Avg, Max
         from ai_engine.dust_clustering import EgyptianDustClusterer
+        from ai_engine.export.calc_engine import transpose_irradiance
 
         clusterer = EgyptianDustClusterer()
         locations = list(Location.objects.all().select_related('governorate'))
@@ -139,6 +140,9 @@ class EgyptianYieldPredictorV2:
             avg_wind  = agg['avg_wind'] or 3.0
             dust_risk = agg['avg_dust'] or clusterer._latitude_dust_default(loc.latitude)
 
+            # Fetch all daily records once per location to perform daily transposition
+            records = list(qs)
+
             # Vary panel parameters → richer feature space
             # NOTE: system_kw is deliberately excluded from features.
             #       We vary it only to compute a realistic specific_yield range.
@@ -148,11 +152,20 @@ class EgyptianYieldPredictorV2:
 
                     # ── TARGET: specific yield (kWh / kWp) — scale-free ──────
                     temp_loss = max(0.0, (avg_temp - 25) * abs(temp_coeff) * 0.01)
-                    # specific_yield = GHI * 365 * PR * loss_factors
-                    # system_kw cancels out when we normalise by system_kw:
-                    #   annual_kWh / system_kw = GHI*365*0.86*(1-temp_loss)*(1-dust)
+                    
+                    # Compute Plane of Array (POA) irradiance daily, then calculate the average
+                    avg_poa = sum(
+                        transpose_irradiance(
+                            float(r.allsky_sfc_sw_dwn),
+                            r.date.timetuple().tm_yday,
+                            loc.latitude,
+                            tilt
+                        )
+                        for r in records
+                    ) / len(records)
+
                     specific_yield = (
-                        avg_ghi * 365 * 0.86
+                        avg_poa * 365 * 0.86
                         * (1 - temp_loss)
                         * (1 - dust_risk)
                     )
@@ -382,11 +395,17 @@ class EgyptianYieldPredictorV2:
         tilts_offset = [-5, 0, 5] * 4
         eff_r   = np.tile(effs, n_locations).astype(float)
         tilt_r  = lat_r + np.tile(tilts_offset, n_locations)
-        temp_c_r = np.full(n, -0.32)
+        # Target: specific yield = POA×365×PR×(1-temp_loss)×(1-dust) + noise
+        from ai_engine.export.calc_engine import transpose_irradiance
+        representative_days = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+        poa_factors = []
+        for i in range(n):
+            poa_sum = sum(transpose_irradiance(1.0, doy, lat_r[i], tilt_r[i]) for doy in representative_days)
+            poa_factors.append(poa_sum / 12.0)
+        poa_factors = np.array(poa_factors)
 
-        # Target: specific yield = GHI×365×PR×(1-temp_loss)×(1-dust) + noise
         temp_loss_r = np.maximum(0.0, (temp_r - 25) * np.abs(temp_c_r) * 0.01)
-        y = (ghi_r * 365 * 0.86 * (1 - temp_loss_r) * (1 - dust_r)
+        y = (ghi_r * poa_factors * 365 * 0.86 * (1 - temp_loss_r) * (1 - dust_r)
              * rng.uniform(0.97, 1.03, n))
 
         X = np.column_stack([ghi_r, temp_r, max_t_r, hum_r, wind_r,
@@ -693,11 +712,17 @@ class EgyptianYieldPredictorV2:
 
         eff       = rng.choice([0.20, 0.21, 0.22, 0.23], n)
         tilt      = lat + rng.uniform(-5, 5, n)
-        temp_c    = np.full(n, -0.32)
+        from ai_engine.export.calc_engine import transpose_irradiance
+        representative_days = [15, 46, 74, 105, 135, 166, 196, 227, 258, 288, 319, 349]
+        poa_factors = []
+        for i in range(n):
+            poa_sum = sum(transpose_irradiance(1.0, doy, lat[i], tilt[i]) for doy in representative_days)
+            poa_factors.append(poa_sum / 12.0)
+        poa_factors = np.array(poa_factors)
 
         temp_loss = np.maximum(0.0, (temp - 25) * np.abs(temp_c) * 0.01)
         # Target = specific yield (no system_kw)
-        y = ghi * 365 * eff * (1 - temp_loss) * (1 - dust)
+        y = ghi * poa_factors * 365 * 0.86 * (1 - temp_loss) * (1 - dust)
         # Add realistic noise (±3%)
         y *= rng.uniform(0.97, 1.03, n)
 
