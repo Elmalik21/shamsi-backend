@@ -169,6 +169,7 @@ class ClimateDataSerializer(serializers.ModelSerializer):
     weather_condition = serializers.SerializerMethodField()
     temperature_level = serializers.SerializerMethodField()
     formatted_date = serializers.SerializerMethodField()
+    temp_range = serializers.SerializerMethodField()
     
     class Meta:
         model = DailyClimateData
@@ -176,11 +177,19 @@ class ClimateDataSerializer(serializers.ModelSerializer):
             'id', 'formatted_date', 'location_name', 'governorate_name',
             'allsky_sfc_sw_dwn', 't2m', 't2m_max', 't2m_min',
             'temp_range', 'rh2m', 'ws2m', 'cloud_amt',
-            'ps', 'prectotcorr', 'weather_condition',
+            'prectotcorr', 'weather_condition',
             'temperature_level', 'solar_efficiency_factor',
             'dust_risk_score', 'created_at'
         ]
-        read_only_fields = fields
+        read_only_fields = [
+            'id', 'solar_efficiency_factor', 'dust_risk_score', 'created_at'
+        ]
+    
+    def get_temp_range(self, obj):
+        """Calculate temperature range"""
+        if obj.t2m_max is not None and obj.t2m_min is not None:
+            return obj.t2m_max - obj.t2m_min
+        return None
     
     def get_weather_condition(self, obj):
         """Determine weather condition based on cloud cover and radiation"""
@@ -220,8 +229,15 @@ class MonthlySummarySerializer(serializers.ModelSerializer):
     
     class Meta:
         model = MonthlySummary
-        fields = '__all__'
-        read_only_fields = fields
+        fields = [
+            'id', 'location', 'location_name', 'year', 'month', 'month_name',
+            'avg_radiation', 'avg_temperature', 'total_precipitation',
+            'days_count', 'solar_grade', 'solar_potential_percentage',
+            'season', 'created_at', 'updated_at'
+        ]
+        read_only_fields = [
+            'id', 'created_at', 'updated_at'
+        ]
     
     def get_month_name(self, obj):
         """Get month name"""

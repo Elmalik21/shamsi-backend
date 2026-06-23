@@ -6,7 +6,7 @@
 #
 import numpy as np
 from rest_framework import viewsets, generics, status
-from rest_framework.decorators import api_view, permission_classes
+from rest_framework.decorators import api_view, permission_classes, action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticatedOrReadOnly, IsAdminUser, IsAuthenticated, AllowAny
 from rest_framework.views import APIView
@@ -38,6 +38,35 @@ class LocationViewSet(viewsets.ReadOnlyModelViewSet):
     serializer_class = LocationSerializer
     permission_classes = [AllowAny]
     filterset_fields = ['governorate', 'solar_potential_category']
+
+    @action(detail=True, methods=['get'])
+    def stats(self, request, pk=None):
+        """Get statistics for a specific location"""
+        location = self.get_object()
+        climate_data = location.climate_data.all()
+        
+        from django.db.models import Max, Min, Sum
+        stats_data = climate_data.aggregate(
+            total_records=Count('id'),
+            avg_radiation=Avg('allsky_sfc_sw_dwn'),
+            max_radiation=Max('allsky_sfc_sw_dwn'),
+            min_radiation=Min('allsky_sfc_sw_dwn'),
+            avg_temperature=Avg('t2m'),
+            avg_humidity=Avg('rh2m'),
+            avg_wind_speed=Avg('ws2m'),
+            total_precipitation=Sum('prectotcorr'),
+        )
+        
+        return Response({
+            'location': {
+                'id': location.id,
+                'location_id': location.location_id,
+                'name': location.name,
+                'latitude': location.latitude,
+                'longitude': location.longitude,
+            },
+            'stats': stats_data
+        })
 
 class DailyClimateDataViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = DailyClimateData.objects.select_related('location__governorate').order_by('-date')
@@ -756,6 +785,7 @@ class ForecastMonthlyView(APIView):
             'monthly_forecast':  monthly_forecast,
             'annual_total_kwh':  annual_total,
             'model':             'random_forest_fallback',
+            'system_kw':         system_kw,
             'confidence':        round(1.0 - (rf_result.get('model_mape', 10) / 100), 2),
             'seasonal_pattern': {
                 'peak_month': months_labels[peak_idx],
@@ -829,6 +859,7 @@ class ForecastMonthlyView(APIView):
                 res['monthly_forecast'] = monthly
                 
             res['annual_total_kwh'] = res.pop('predicted_annual_kwh')
+            res['system_kw'] = system_kw
             res['dust_zone'] = dust_zone['name']
             res['location'] = {
                 'id': loc.location_id if loc else None, 

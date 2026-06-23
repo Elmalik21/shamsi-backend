@@ -230,6 +230,74 @@ class EgyptianSolarOptimizer:
         if count > max_panels or count < 2:
             return (0.0, float('inf'), 0.0)
 
+        # Get panel electrical specs
+        panel_power = float(getattr(panel, 'capacity_w', 580.0))
+        if panel_power >= 600:
+            panel_vmp = 45.0
+        elif panel_power >= 500:
+            panel_vmp = 42.0
+        elif panel_power >= 400:
+            panel_vmp = 38.0
+        else:
+            panel_vmp = 34.0
+        panel_imp = round(panel_power / panel_vmp, 2)
+        panel_voc = round(panel_vmp * 1.2, 2)
+        panel_isc = round(panel_imp * 1.05, 2)
+
+        # Get inverter specs
+        inverter_kw = float(getattr(inverter, 'capacity_kw', 10.0))
+        max_dc_v = float(getattr(inverter, 'max_dc_voltage_v', None) or 1000.0)
+        mppt_min_v = float(getattr(inverter, 'mppt_min_v', None) or 200.0)
+        mppt_max_v = float(getattr(inverter, 'mppt_max_v', None) or 950.0)
+        max_dc_current = float(getattr(inverter, 'max_dc_current_a', None) or 25.0)
+
+        # Hard constraint: DC/AC ratio check (max 1.35)
+        sys_kw = (count * panel_power) / 1000.0
+        dc_ac = sys_kw / inverter_kw if inverter_kw > 0 else 1.0
+        if dc_ac > 1.35:
+            return (0.0, float('inf'), 0.0)
+
+        # Calculate optimal string configuration for this individual candidate
+        divisors = [i for i in range(1, count + 1) if count % i == 0]
+        best_pps = None
+        best_score = -1
+        for d in divisors:
+            vmp_str = d * panel_vmp
+            voc_cold = d * panel_voc * 1.12
+            fits_mppt = mppt_min_v <= vmp_str <= mppt_max_v
+            fits_voc = voc_cold <= max_dc_v
+            score = 0
+            if fits_mppt: score += 10
+            if fits_voc: score += 10
+            if 8 <= d <= 22: score += 5
+            elif 5 <= d <= 26: score += 2
+            
+            if score > best_score:
+                best_score = score
+                best_pps = d
+
+        if best_pps is not None:
+            panels_per_string = best_pps
+            strings = count // best_pps
+        else:
+            panels_per_string = count
+            strings = 1
+
+        # Hard constraint: Parallel String Current overload check
+        total_string_isc = strings * panel_isc
+        if total_string_isc > max_dc_current:
+            return (0.0, float('inf'), 0.0)
+
+        # Hard constraint: Cold Voc Overvoltage check
+        voc_cold_total = panels_per_string * panel_voc * 1.12
+        if voc_cold_total > max_dc_v:
+            return (0.0, float('inf'), 0.0)
+
+        # Hard constraint: MPPT voltage ranges
+        string_vmp_stc = panels_per_string * panel_vmp
+        if string_vmp_stc < mppt_min_v or string_vmp_stc > mppt_max_v:
+            return (0.0, float('inf'), 0.0)
+
         # Hard constraint: budget
         cost = self._f2_cost(individual, context)
         if cost > context['site']['budget_egp']:
@@ -458,7 +526,13 @@ class EgyptianSolarOptimizer:
         if random.random() < self.MUTATION_PROB:
             # panel_count ±20%
             panel = context['panels'][ind[0]]
-            max_p = int(context['site']['available_area_m2'] / panel.area_m2)
+            inverter = context['inverters'][ind[1]]
+            max_p_area = max(2, int(context['site']['available_area_m2'] / panel.area_m2))
+            panel_kw = panel.capacity_w / 1000.0
+            max_p_inv = max(2, int(1.35 * inverter.capacity_kw / panel_kw))
+            max_p = min(max_p_area, max_p_inv)
+            if max_p < 2:
+                max_p = 2
             delta = random.randint(-3, 3)
             ind[2] = max(2, min(max_p, ind[2] + delta))
         if random.random() < self.MUTATION_PROB:
@@ -473,8 +547,16 @@ class EgyptianSolarOptimizer:
         panel   = random.randint(0, len(context['panels']) - 1)
         inv     = random.randint(0, len(context['inverters']) - 1)
         pa      = context['panels'][panel]
-        max_p   = max(2, int(context['site']['available_area_m2'] / pa.area_m2))
-        count   = random.randint(4, max_p)
+        inverter = context['inverters'][inv]
+        
+        max_p_area = max(2, int(context['site']['available_area_m2'] / pa.area_m2))
+        panel_kw = pa.capacity_w / 1000.0
+        max_p_inv = max(2, int(1.35 * inverter.capacity_kw / panel_kw))
+        max_p = min(max_p_area, max_p_inv)
+        if max_p < 2:
+            max_p = 2
+            
+        count   = random.randint(2, max_p) if max_p >= 2 else 2
         tilt    = round(lat + random.uniform(-5, 5), 1)
         ind     = self._Individual([panel, inv, count, tilt])
         ind.fitness = None

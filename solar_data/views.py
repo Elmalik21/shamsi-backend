@@ -53,8 +53,13 @@ class GovernorateViewSet(viewsets.ReadOnlyModelViewSet):
     ViewSet for Governorate data
     Provides CRUD operations for Egyptian governorates
     """
-    queryset = Governorate.objects.all().order_by('name')
     serializer_class = GovernorateSerializer
+    def get_queryset(self):
+        return Governorate.objects.annotate(
+            location_count=Count('locations', distinct=True),
+            avg_solar_radiation=Avg('locations__avg_solar_radiation'),
+            avg_solar_potential=Avg('locations__solar_potential_score'),
+        ).order_by('name')
     pagination_class = StandardResultsSetPagination
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['code']
@@ -132,8 +137,7 @@ class LocationViewSet(viewsets.ReadOnlyModelViewSet):
             'climate_data', 'monthly_summaries'
         )
     
-    @action(detail=True, methods=['get'])
-    def detail(self, request, pk=None):
+    def retrieve(self, request, *args, **kwargs):
         """Get detailed location information"""
         location = self.get_object()
         serializer = LocationDetailSerializer(location)
