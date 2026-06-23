@@ -38,7 +38,7 @@ python-dotenv>=1.0.0
 # CPU-only wheels are much smaller (~200 MB vs 800 MB for CUDA).
 torch>=2.0.0
 torchvision>=0.15.0
-ultralytics==8.0.200
+ultralytics>=8.4.0
 
 # ── PDF export ────────────────────────────────────────────────────────────────
 reportlab>=4.0.0
