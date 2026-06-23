@@ -557,12 +557,22 @@ class TestExportViewHelpers(unittest.TestCase):
         import django
         from django.conf import settings
         if not settings.configured:
-            settings.configure(
-                MEDIA_ROOT='/tmp/shamsi_test_exports',
-                MEDIA_URL='/media/',
-                INSTALLED_APPS=['rest_framework'],
-                DATABASES={},
-            )
+            import os
+            if os.environ.get('DJANGO_SETTINGS_MODULE'):
+                pass
+            else:
+                settings.configure(
+                    MEDIA_ROOT='/tmp/shamsi_test_exports',
+                    MEDIA_URL='/media/',
+                    INSTALLED_APPS=[
+                        'django.contrib.auth',
+                        'django.contrib.contenttypes',
+                        'rest_framework',
+                        'solar_data',
+                        'api',
+                    ],
+                    DATABASES={},
+                )
         django.setup()
 
     def test_export_dir_created(self):

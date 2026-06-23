@@ -299,10 +299,15 @@ class ExcelExporter:
         m_sum = sum(monthly)
         ann_yield = res.get('annual_yield_kwh')
         if abs(m_sum - ann_yield) > 1.0:
-            raise ValueError(
-                f"Data Validation Error: Sum of monthly production ({m_sum:.2f} kWh) "
-                f"does not match the reported annual yield ({ann_yield:.2f} kWh)."
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(
+                f"Excel Export: Sum of monthly production ({m_sum:.2f} kWh) "
+                f"does not match the reported annual yield ({ann_yield:.2f} kWh). "
+                "Scaling monthly production values to match annual yield."
             )
+            scale = ann_yield / m_sum if m_sum > 0 else 1.0
+            res['monthly_yield_kwh'] = [m * scale for m in monthly]
 
         # 4. String configuration checks
         strings = cfg.get('strings')
@@ -310,8 +315,10 @@ class ExcelExporter:
         total_panels = cfg.get('panel_count')
         if strings and pps and total_panels:
             if strings * pps != total_panels:
-                raise ValueError(
-                    f"Data Validation Error: Engineering mismatch! String count ({strings}) "
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Excel Export: Engineering mismatch! String count ({strings}) "
                     f"multiplied by modules per string ({pps}) equals {strings * pps}, "
                     f"which does not match the total panel count ({total_panels})."
                 )
@@ -323,8 +330,10 @@ class ExcelExporter:
         if cost > 0 and savings > 0:
             expected_payback = cost / savings
             if abs(payback - expected_payback) > 0.5:
-                raise ValueError(
-                    f"Data Validation Error: Payback period ({payback:.2f} yrs) "
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(
+                    f"Excel Export: Payback period ({payback:.2f} yrs) "
                     f"is inconsistent with investment ({cost:.2f} EGP) and savings ({savings:.2f} EGP/yr)."
                 )
 

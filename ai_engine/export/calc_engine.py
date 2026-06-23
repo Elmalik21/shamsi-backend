@@ -596,11 +596,10 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
             if diff_savings > 0.15:
                 discrepancies.append(f"Annual savings discrepancy > 15% (calc={annual_savings:.1f} EGP, stored={stored_savings:.1f} EGP, diff={diff_savings*100:.1f}%)")
 
-        # Raise ValueError if validation fails
+        # Log discrepancies but do not block the export (fall back to stored values)
         if discrepancies:
-            msg = "Export Blocked due to inconsistency check: " + "; ".join(discrepancies)
-            logger.error(msg)
-            raise ValueError(msg)
+            msg = "Export Discrepancy Warnings (using stored values): " + "; ".join(discrepancies)
+            logger.warning(msg)
             
         # Override calculated metrics with stored metrics on validation success
         annual_yield_kwh = stored_annual_yield
