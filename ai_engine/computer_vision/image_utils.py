@@ -262,47 +262,60 @@ class ImageProcessor:
     def _fetch_esri_tile(lat, lon, zoom, size) -> np.ndarray:
         """
         Fetch ESRI World Imagery satellite tile — free, no API key required.
-
-        ESRI World Imagery provides cloud-free, high-resolution imagery for most of Egypt.
-        Tile URL format: /MapServer/tile/{z}/{y}/{x}
-        At zoom 19 this gives ~0.3 m/px — ideal for roof detection.
+        Auto-retries at lower zoom levels if 'Map data not yet available' is returned.
         """
         try:
             import requests
         except ImportError:
             raise ImportError("pip install requests")
 
-        # Convert lat/lon to Slippy Map tile coordinates
         import math
-        lat_r = math.radians(lat)
-        n = 2 ** zoom
-        xtile = int((lon + 180.0) / 360.0 * n)
-        ytile = int((1.0 - math.asinh(math.tan(lat_r)) / math.pi) / 2.0 * n)
-
-        url = (
-            f"https://server.arcgisonline.com/ArcGIS/rest/services/"
-            f"World_Imagery/MapServer/tile/{zoom}/{ytile}/{xtile}"
-        )
         headers = {'User-Agent': 'ShamsiSmart/2.0 (solar-energy-research; Egypt)'}
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
 
-        if PIL_AVAILABLE:
-            from PIL import Image as PILImage
-            import io
-            img = PILImage.open(io.BytesIO(resp.content)).convert('RGB')
-            img = img.resize((size, size), PILImage.LANCZOS)
-            arr = np.array(img)
-            # Convert RGB → BGR for OpenCV compatibility
+        for current_zoom in range(zoom, 14, -1):
+            lat_r = math.radians(lat)
+            n = 2 ** current_zoom
+            xtile = int((lon + 180.0) / 360.0 * n)
+            ytile = int((1.0 - math.asinh(math.tan(lat_r)) / math.pi) / 2.0 * n)
+
+            url = (
+                f"https://server.arcgisonline.com/ArcGIS/rest/services/"
+                f"World_Imagery/MapServer/tile/{current_zoom}/{ytile}/{xtile}"
+            )
+            
+            resp = requests.get(url, headers=headers, timeout=15)
+            resp.raise_for_status()
+            
+            # ESRI returns a ~2.5KB image for 'Map data not yet available'.
+            if len(resp.content) < 3500:
+                logger.info(f"ESRI tile missing at zoom {current_zoom}, retrying at {current_zoom-1}...")
+                continue
+
+            # Valid tile found! Scale it to preserve the originally requested zoom's MPP
+            scale_factor = 2 ** (zoom - current_zoom)
+            target_size = min(1024, int(256 * scale_factor))
+
+            if PIL_AVAILABLE:
+                from PIL import Image as PILImage
+                import io
+                img = PILImage.open(io.BytesIO(resp.content)).convert('RGB')
+                if target_size != 256:
+                    img = img.resize((target_size, target_size), PILImage.LANCZOS)
+                arr = np.array(img)
+                if CV2_AVAILABLE:
+                    return arr[:, :, ::-1].copy()
+                return arr
+
             if CV2_AVAILABLE:
-                return arr[:, :, ::-1].copy()
-            return arr
+                img_arr = np.frombuffer(resp.content, dtype=np.uint8)
+                img = cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
+                if target_size != 256:
+                    img = cv2.resize(img, (target_size, target_size), interpolation=cv2.INTER_LANCZOS4)
+                return img
 
-        if CV2_AVAILABLE:
-            img_arr = np.frombuffer(resp.content, dtype=np.uint8)
-            return cv2.imdecode(img_arr, cv2.IMREAD_COLOR)
-
-        raise ImportError("Install opencv-python or Pillow to decode ESRI tiles.")
+            raise ImportError("Install opencv-python or Pillow to decode ESRI tiles.")
+            
+        raise RuntimeError("No valid ESRI satellite tiles found for this location.")
 
     @staticmethod
     def _fetch_osm_tile(lat, lon, zoom, size) -> np.ndarray:
