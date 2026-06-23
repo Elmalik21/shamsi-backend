@@ -897,7 +897,7 @@ class ProfessionalPDFReport:
             ['Cost per Watt-peak',      _fmt(res.get('cost_per_watt'), 2, ' EGP/Wp')],
             ['Simple Payback Period',   _fmt(res.get('payback_years'), 1, ' years')],
             ['25-Year Net Savings',     _fmt(res.get('lifetime_savings_egp'), 0, ' EGP')],
-            ['Annual CO\u2082 Avoided', _fmt((res.get('annual_yield_kwh') or 0) * 0.47 / 1000, 2, ' tCO\u2082')],
+            ['Annual CO\u2082 Avoided', _fmt((res.get('annual_yield_kwh') or 0) * 0.48 / 1000, 2, ' tCO\u2082')],
         ]
         tbl = Table(kpi_rows, colWidths=[100*mm, 70*mm])
         tbl.setStyle(_metric_table_style())
@@ -1306,8 +1306,8 @@ class ProfessionalPDFReport:
             ['25-Year Gross Savings',        _fmt(ls, 0, ' EGP')],
             ['25-Year Net Profit (after CAPEX)', _fmt(net_profit_25, 0, ' EGP')],
             ['Levelised Cost of Energy (LCOE)', f'{lcoe:.3f} EGP/kWh' if lcoe else 'N/A'],
-            ['Annual CO\u2082 Offset',       _fmt(annual * 0.47 / 1000, 2, ' tCO\u2082/yr') if annual else '—'],
-            ['25-Year CO\u2082 Offset (est.)',_fmt(annual * 0.47 / 1000 * 22, 1, ' tCO\u2082') if annual else '—'],
+            ['Annual CO\u2082 Offset',       _fmt(annual * 0.48 / 1000, 2, ' tCO\u2082/yr') if annual else '—'],
+            ['25-Year CO\u2082 Offset (est.)',_fmt(annual * 0.48 / 1000 * 22, 1, ' tCO\u2082') if annual else '—'],
         ]
         fin_tbl = Table(fin_rows, colWidths=[100*mm, 70*mm])
         fin_tbl.setStyle(_metric_table_style())

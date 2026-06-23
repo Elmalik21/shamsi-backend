@@ -177,7 +177,7 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
     cfg['panels_per_string'] = panels_per_string
 
     # 3. Inverter & System Type Sizing
-    inv_type = _val(inverter, 'inverter_type', default='ON_GRID')
+    inv_type = selected.get('inverter_type') or _val(inverter, 'inverter_type', default='ON_GRID')
     is_off_grid = (inv_type == 'OFF_GRID')
     is_hybrid = (inv_type == 'HYBRID')
     include_battery = is_off_grid or is_hybrid or bool(cfg.get('include_battery', False))
@@ -461,6 +461,110 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
     project_data['monthly_poa'] = monthly_poa
     project_data['monthly_temp'] = monthly_temp
     project_data['avg_ghi_daily'] = avg_ghi_daily
+
+    # --- Single Source of Truth & Consistency Check ---
+    stored_annual_yield = selected.get('annual_yield_kwh') or selected.get('annual_yield')
+    if stored_annual_yield:
+        discrepancies = []
+        
+        # 1. System Type
+        stored_system_type = selected.get('inverter_type')
+        if stored_system_type and stored_system_type != inv_type:
+            discrepancies.append(f"System Type mismatch (calc={inv_type}, stored={stored_system_type})")
+            
+        # 2. Number of Modules
+        stored_panel_count = selected.get('panel_count')
+        if stored_panel_count and int(stored_panel_count) != panel_count:
+            discrepancies.append(f"Panel count mismatch (calc={panel_count}, stored={stored_panel_count})")
+            
+        # 3. Inverter Selection
+        stored_inverter_model = selected.get('inverter_model')
+        if stored_inverter_model and inverter and getattr(inverter, 'model', '') != stored_inverter_model:
+            discrepancies.append(f"Inverter model mismatch (calc={getattr(inverter, 'model', '')}, stored={stored_inverter_model})")
+            
+        # 4. Annual Energy Yield (15% threshold)
+        diff_yield = abs(annual_yield_kwh - stored_annual_yield) / stored_annual_yield
+        if diff_yield > 0.15:
+            discrepancies.append(f"Annual yield discrepancy > 15% (calc={annual_yield_kwh:.1f} kWh, stored={stored_annual_yield:.1f} kWh, diff={diff_yield*100:.1f}%)")
+            
+        # 5. Specific Yield (15% threshold)
+        stored_specific_yield = selected.get('specific_yield') or selected.get('specific_yield_kwh_per_kwp')
+        if stored_specific_yield:
+            diff_spec = abs(specific_yield - stored_specific_yield) / stored_specific_yield
+            if diff_spec > 0.15:
+                discrepancies.append(f"Specific yield discrepancy > 15% (calc={specific_yield:.1f}, stored={stored_specific_yield:.1f}, diff={diff_spec*100:.1f}%)")
+                
+        # 6. Performance Ratio (15% threshold)
+        stored_pr = selected.get('performance_ratio') or selected.get('pr')
+        if stored_pr:
+            # Normalize both to fraction
+            norm_stored_pr = stored_pr / 100.0 if stored_pr > 1.0 else stored_pr
+            norm_calc_pr = annual_pr / 100.0 if annual_pr > 1.0 else annual_pr
+            diff_pr = abs(norm_calc_pr - norm_stored_pr)
+            if diff_pr > 0.15:
+                discrepancies.append(f"Performance ratio discrepancy > 15% (calc={norm_calc_pr*100:.1f}%, stored={norm_stored_pr*100:.1f}%)")
+                
+        # 7. Payback Period (15% threshold)
+        stored_payback = selected.get('payback_years') or selected.get('payback')
+        if stored_payback and stored_payback > 0:
+            diff_payback = abs(payback_years - stored_payback) / stored_payback
+            if diff_payback > 0.15:
+                discrepancies.append(f"Payback period discrepancy > 15% (calc={payback_years:.1f} yrs, stored={stored_payback:.1f} yrs, diff={diff_payback*100:.1f}%)")
+
+        # 8. Financial Metrics (15% threshold)
+        stored_cost = selected.get('total_cost_egp') or selected.get('cost_egp')
+        if stored_cost:
+            diff_cost = abs(total_cost - stored_cost) / stored_cost
+            if diff_cost > 0.15:
+                discrepancies.append(f"Total cost discrepancy > 15% (calc={total_cost:.1f} EGP, stored={stored_cost:.1f} EGP, diff={diff_cost*100:.1f}%)")
+
+        stored_savings = selected.get('annual_savings_egp') or selected.get('annual_savings')
+        if stored_savings:
+            diff_savings = abs(annual_savings - stored_savings) / stored_savings
+            if diff_savings > 0.15:
+                discrepancies.append(f"Annual savings discrepancy > 15% (calc={annual_savings:.1f} EGP, stored={stored_savings:.1f} EGP, diff={diff_savings*100:.1f}%)")
+
+        # Raise ValueError if validation fails
+        if discrepancies:
+            msg = "Export Blocked due to inconsistency check: " + "; ".join(discrepancies)
+            logger.error(msg)
+            raise ValueError(msg)
+            
+        # Override calculated metrics with stored metrics on validation success
+        annual_yield_kwh = stored_annual_yield
+        if stored_specific_yield:
+            specific_yield = stored_specific_yield
+        if stored_pr:
+            annual_pr = stored_pr / 100.0 if stored_pr > 1.0 else stored_pr
+        if stored_payback:
+            payback_years = stored_payback
+        if stored_cost:
+            total_cost = stored_cost
+        if stored_savings:
+            annual_savings = stored_savings
+            
+        stored_monthly = selected.get('monthly_production') or selected.get('monthly_yield_kwh')
+        if stored_monthly:
+            monthly_yield = stored_monthly
+            
+        stored_lifetime = selected.get('roi_25yr_egp') or selected.get('lifetime_savings_egp')
+        if stored_lifetime:
+            cumulative = stored_lifetime
+
+        stored_system_kw = selected.get('system_kw') or selected.get('system_kwp')
+        if stored_system_kw:
+            system_kw = stored_system_kw
+            project_data['system_kw'] = system_kw
+
+        # Update opt dictionary with aligned values
+        opt['annual_yield_kwh'] = annual_yield_kwh
+        opt['monthly_yield_kwh'] = monthly_yield
+        opt['specific_yield'] = specific_yield
+        opt['performance_ratio'] = annual_pr
+        opt['total_cost_egp'] = total_cost
+        opt['annual_savings_egp'] = annual_savings
+        opt['payback_years'] = payback_years
+        opt['lifetime_savings_egp'] = cumulative
 
     # Overwrite results
     project_data['optimization_results'] = opt

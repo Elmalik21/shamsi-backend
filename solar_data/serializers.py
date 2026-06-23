@@ -251,7 +251,7 @@ class DesignProjectSerializer(serializers.ModelSerializer):
         model = DesignProject
         fields = [
             'id', 'project_id', 'name', 'client_name', 'location', 'available_area_m2',
-            'monthly_consumption_kwh', 'usage_type', 'budget_egp',
+            'monthly_consumption_kwh', 'load_input_mode', 'monthly_bill_egp', 'usage_type', 'budget_egp',
             'shading_loss_pct', 'include_battery', 'status',
             'optimization_run_id', 'pareto_solutions', 'selected_design',
             'created_at', 'updated_at',

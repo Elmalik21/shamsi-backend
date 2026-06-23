@@ -376,6 +376,8 @@ class DesignProject(models.Model):
     location               = models.ForeignKey('Location', on_delete=models.PROTECT)
     available_area_m2      = models.FloatField()
     monthly_consumption_kwh= models.FloatField()
+    load_input_mode        = models.CharField(max_length=10, default='kwh')
+    monthly_bill_egp       = models.FloatField(null=True, blank=True)
     usage_type             = models.CharField(max_length=30)
     budget_egp             = models.FloatField()
     shading_loss_pct       = models.FloatField(default=5.0)

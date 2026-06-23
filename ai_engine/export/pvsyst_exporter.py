@@ -143,14 +143,15 @@ def make_synthetic_project(location_name: str = 'Cairo') -> Dict:
         'dust_loss_pct'       : 5.0,
         'shading_loss_pct'    : 3.0,
         'optimization_results': {
-            'annual_yield_kwh'      : 24_800,
+            'annual_yield_kwh'      : 24_250,
             'monthly_yield_kwh'     : [1550, 1650, 2100, 2200, 2350, 2400,
                                        2450, 2350, 2100, 1900, 1650, 1550],
             'specific_yield'        : 1427,
             'total_cost_egp'        : 210_000,
             'cost_per_watt'         : 12.1,
-            'payback_years'         : 5.8,
+            'payback_years'         : 6.4,
             'lifetime_savings_egp'  : 1_230_000,
+            'annual_savings_egp'    : 32737.5,
         },
     }
 
