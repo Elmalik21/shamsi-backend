@@ -485,13 +485,35 @@ class YOLODatasetCreator:
             
             # Obstacles (Seamless Cloning)
             for box in placed_boxes:
-                x1, y1, x2, y2 = box
+                x1, y1, x2, y2, cls_id = box
                 w_box, h_box = x2 - x1, y2 - y1
                 if w_box < 5 or h_box < 5: 
                     continue
                 
-                obs_color = (rng.randint(50, 100), rng.randint(50, 100), rng.randint(50, 100))
+                # Assign distinct colors and shapes based on obstacle class
+                if cls_id == 1:   # chimney (red/brown)
+                    obs_color = (rng.randint(30, 60), rng.randint(40, 80), rng.randint(100, 150)) 
+                elif cls_id == 2: # ac_unit (white/grey)
+                    obs_color = (rng.randint(200, 230), rng.randint(200, 230), rng.randint(200, 230))
+                elif cls_id == 3: # water_tank (black/dark blue)
+                    obs_color = (rng.randint(10, 30), rng.randint(10, 30), rng.randint(10, 30))
+                elif cls_id == 4: # satellite_dish (grey)
+                    obs_color = (rng.randint(140, 170), rng.randint(140, 170), rng.randint(140, 170))
+                else:             # vent or other (dark grey)
+                    obs_color = (rng.randint(50, 100), rng.randint(50, 100), rng.randint(50, 100))
+                    
                 src = np.full((h_box, w_box, 3), obs_color, dtype=np.uint8)
+                
+                # Draw internal shapes to make them distinct to the AI
+                if cls_id == 2:  # AC unit: add a dark fan circle
+                    cv2.circle(src, (w_box//2, h_box//2), min(w_box, h_box)//3, (50, 50, 50), -1)
+                elif cls_id == 3 and rng.random() > 0.4: # Water tank: circular base
+                    src = np.full((h_box, w_box, 3), [base_r, base_r, base_r], dtype=np.uint8)
+                    cv2.circle(src, (w_box//2, h_box//2), min(w_box, h_box)//2, obs_color, -1)
+                elif cls_id == 4: # Satellite dish: circle with center LNB dot
+                    src = np.full((h_box, w_box, 3), [base_r, base_r, base_r], dtype=np.uint8)
+                    cv2.circle(src, (w_box//2, h_box//2), min(w_box, h_box)//2, obs_color, -1)
+                    cv2.circle(src, (w_box//2 + 2, h_box//2 + 2), 3, (30,30,30), -1)
                 
                 # Add texture to obstacle
                 noise_src = np_rng.integers(-15, 15, size=(h_box, w_box, 3))
@@ -560,7 +582,7 @@ class YOLODatasetCreator:
                             box[3] < pb[1] or box[1] > pb[3])
                        for pb in placed_boxes):
                     continue
-                placed_boxes.append(box)
+                placed_boxes.append((ox, oy, ox + ow, oy + oh, cls_id))
                 obs_pts = [[ox, oy], [ox+ow, oy], [ox+ow, oy+oh], [ox, oy+oh]]
                 obstacle_lines.append(self._pts_to_yolo_line(cls_id, obs_pts, s, s))
 
