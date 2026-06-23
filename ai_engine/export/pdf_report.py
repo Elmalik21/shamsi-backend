@@ -518,6 +518,7 @@ def _extract_results(project_data: dict) -> dict:
     payback_yrs    = _pick('payback_years', 'payback_period_years')
     annual_savings = _pick('annual_savings_egp', 'annual_saving_egp')
     lifetime_sav   = _pick('lifetime_savings_egp', 'savings_25yr_egp')
+    gross_sav      = _pick('gross_savings_25yr', 'total_savings_25yr')
     panel_count    = int(_pick('panel_count', 'num_panels', default=0))
     system_kw      = _pick('system_kw', 'system_kwp', 'capacity_kw')
 
@@ -529,8 +530,26 @@ def _extract_results(project_data: dict) -> dict:
     if cost_per_w == 0 and total_cost and system_kw:
         cost_per_w = total_cost / (float(system_kw) * 1000.0)
         
-    if lifetime_sav == 0 and annual_savings:
-        lifetime_sav = annual_savings * 25
+    if not gross_sav or gross_sav == 0:
+        if annual_savings:
+            degradation = 0.005
+            escalation = 0.05
+            cum_savings = 0.0
+            usage_type = project_data.get('usage_type', 'RESIDENTIAL') or 'RESIDENTIAL'
+            tariff_price = 1.35 if usage_type == 'RESIDENTIAL' else 1.75
+            for yr in range(1, 26):
+                prod_t = annual_kwh * ((1.0 - degradation) ** yr) if annual_kwh else 0.0
+                tariff_t = tariff_price * ((1.0 + escalation) ** yr)
+                cum_savings += prod_t * tariff_t
+            gross_sav = cum_savings
+        else:
+            gross_sav = 0.0
+
+    if not lifetime_sav or lifetime_sav == 0:
+        if gross_sav:
+            lifetime_sav = gross_sav - total_cost
+        else:
+            lifetime_sav = 0.0
         
     panel_id       = sol.get('panel_id') or opt.get('panel_id')
     inverter_id    = sol.get('inverter_id') or opt.get('inverter_id')
@@ -550,6 +569,7 @@ def _extract_results(project_data: dict) -> dict:
         'payback_years'     : payback_yrs,
         'annual_savings_egp': annual_savings,
         'lifetime_savings_egp': lifetime_sav,
+        'gross_savings_25yr': gross_sav,
         'panel_count'       : panel_count,
         'system_kw'         : system_kw,
         'performance_ratio' : perf_ratio,
@@ -643,7 +663,7 @@ class ProfessionalPDFReport:
 
         # 3. Engineering compliance metrics verification
         metrics = self.project.get('compliance_metrics') or {}
-        required_keys = ['dc_ac_ratio', 'cold_voc', 'max_dc_v', 'hot_vmp', 'mppt_min_v', 'mppt_max_v', 'stc_vmp']
+        required_keys = ['dc_ac_ratio', 'cold_voc', 'max_dc_v', 'hot_vmp', 'mppt_min_v', 'mppt_max_v', 'stc_vmp', 'total_string_isc', 'max_dc_current']
         for key in required_keys:
             if key not in metrics or metrics[key] is None or metrics[key] <= 0:
                 raise ValueError(f"Consistency Error: Required engineering metric '{key}' is missing or invalid in compliance metrics.")
@@ -875,9 +895,15 @@ class ProfessionalPDFReport:
                 f'The total investment is estimated at <b>{cost:,.0f} EGP</b>, '
                 f'with a simple payback period of <b>{pb:.1f} years</b>. '
             )
-        ls = res.get('lifetime_savings_egp', 0)
-        if ls:
-            narrative += f'Projected net savings over 25 years are <b>{ls:,.0f} EGP</b>.'
+        gross = res.get('gross_savings_25yr', 0)
+        net   = res.get('lifetime_savings_egp', 0)
+        if gross and net:
+            narrative += (
+                f'Projected gross savings over 25 years are <b>{gross:,.0f} EGP</b>, '
+                f'yielding a lifetime net profit of <b>{net:,.0f} EGP</b> after recovering the initial investment.'
+            )
+        elif net:
+            narrative += f'Projected net profit over 25 years is <b>{net:,.0f} EGP</b>.'
 
         elements.append(Paragraph(narrative, styles['BodyText']))
         elements.append(Spacer(1, 5*mm))
@@ -896,7 +922,8 @@ class ProfessionalPDFReport:
             ['Total Investment',        _fmt(res.get('total_cost_egp'), 0, ' EGP')],
             ['Cost per Watt-peak',      _fmt(res.get('cost_per_watt'), 2, ' EGP/Wp')],
             ['Simple Payback Period',   _fmt(res.get('payback_years'), 1, ' years')],
-            ['25-Year Net Savings',     _fmt(res.get('lifetime_savings_egp'), 0, ' EGP')],
+            ['25-Year Gross Savings',   _fmt(res.get('gross_savings_25yr'), 0, ' EGP')],
+            ['25-Year Net Profit',      _fmt(res.get('lifetime_savings_egp'), 0, ' EGP')],
             ['Annual CO\u2082 Avoided', _fmt((res.get('annual_yield_kwh') or 0) * 0.48 / 1000, 2, ' tCO\u2082')],
         ]
         tbl = Table(kpi_rows, colWidths=[100*mm, 70*mm])
@@ -983,8 +1010,8 @@ class ProfessionalPDFReport:
         m_temp = self.project.get('monthly_temp') or [25]*12
         
         for i, m_name in enumerate(months_short):
-            ghi_d = m_ghi[i] / 30.4 if m_ghi[i] > 0 else 0
-            poa_d = m_poa[i] / 30.4 if m_poa[i] > 0 else 0
+            ghi_d = m_ghi[i]
+            poa_d = m_poa[i]
             temp_val = m_temp[i]
             irr_rows.append([
                 m_name,
@@ -1359,6 +1386,15 @@ class ProfessionalPDFReport:
         stc_vmp = metrics.get('stc_vmp') or 420.0
         t_min = metrics.get('t_min') or 5.0
         t_max = metrics.get('t_max') or 70.0
+        
+        # DC current metrics
+        total_string_isc = metrics.get('total_string_isc')
+        max_dc_current = metrics.get('max_dc_current')
+        if total_string_isc is None or max_dc_current is None:
+            isc_a = float(_safe(self.panel, 'isc_a', default=13.63))
+            strings = int(self.config.get('strings') or 1)
+            total_string_isc = strings * isc_a
+            max_dc_current = float(_safe(self.inverter, 'max_dc_current_a', default=25.0))
 
         topo_status = "<font color='#ef4444'>✗ FAIL</font>" if any("Inconsistency" in w for w in warnings) else "<font color='#22c55e'>✓ PASS</font>"
 
@@ -1387,6 +1423,12 @@ class ProfessionalPDFReport:
                 f'{stc_vmp:.1f} V (at 25°C)',
                 f'< {mppt_max_v:.0f} V (MPPT Max)',
                 "<font color='#22c55e'>✓ PASS</font>" if (stc_vmp <= mppt_max_v) else "<font color='#f59e0b'>⚠ WARN</font>"
+            ],
+            [
+                'Max DC Input Current',
+                f'{total_string_isc:.2f} A',
+                f'≤ {max_dc_current:.2f} A',
+                "<font color='#22c55e'>✓ PASS</font>" if (total_string_isc <= max_dc_current) else "<font color='#ef4444'>✗ FAIL</font>"
             ],
             [
                 'System Topology Match',

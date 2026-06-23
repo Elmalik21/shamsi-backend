@@ -45,9 +45,9 @@ logger = logging.getLogger(__name__)
 try:
     from ultralytics import YOLO
     YOLO_AVAILABLE = True
-except ImportError:
+except (ImportError, OSError) as e:
     YOLO_AVAILABLE = False
-    logger.info("ultralytics not installed — roof detector will use heuristic fallback.")
+    logger.warning("ultralytics/torch could not be imported (%s) — roof detector will use heuristic fallback.", e)
 
 try:
     import cv2
