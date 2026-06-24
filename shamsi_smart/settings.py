@@ -140,6 +140,7 @@ CORS_ALLOWED_ORIGINS = [
     'http://localhost:4173',
     'http://localhost:3000',
     'http://127.0.0.1:5173',
+    'https://shamsi-front.ahmedelshkh6566.workers.dev',
 ]
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
@@ -159,6 +160,7 @@ CSRF_TRUSTED_ORIGINS = [
     'https://shamsiai.netlify.app',
     'https://shamsi-backend-production.up.railway.app',
     'https://*.railway.app',
+    'https://shamsi-front.ahmedelshkh6566.workers.dev',
 ]
 
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
