@@ -37,16 +37,15 @@ class EgyptianSolarOptimizer:
 
     # ── Adaptive parameters ───────────────────────────────────────────────────
     # These are defaults; run() will auto-tune based on search-space size.
-    # Increased for higher-fidelity search — CNN-LSTM re-scoring applied at the end.
-    POPULATION_SIZE = 80
-    GENERATIONS     = 40
-    CROSSOVER_PROB  = 0.75
-    MUTATION_PROB   = 0.25
-    TOURNAMENT_SIZE = 3
+    POPULATION_SIZE = 30
+    GENERATIONS     = 20
+    CROSSOVER_PROB  = 0.7
+    MUTATION_PROB   = 0.3
+    TOURNAMENT_SIZE = 2
 
     # Hard wall: never exceed this total wall-clock time (Railway 30s timeout)
-    # Stop before 30s to allow CNN-LSTM inference + response formatting.
-    MAX_WALL_SECONDS = 25
+    # Stop before 30s to allow response formatting and transmission.
+    MAX_WALL_SECONDS = 22
 
     def __init__(self):
         # Use Model Registry singleton if available (loaded at startup)
@@ -362,24 +361,7 @@ class EgyptianSolarOptimizer:
             'avg_wind_speed':  agg['avg_wind'] or 3.5,
         }
 
-        # Load daily climate sequence for CNN-LSTM deep inference
-        # CNN-LSTM expects 365 daily rows of [GHI, temp, humidity, wind, dust]
-        daily_qs = (
-            DailyClimateData.objects
-            .filter(location=loc)
-            .order_by('date')
-            .values('allsky_sfc_sw_dwn', 't2m', 'rh2m', 'ws2m')
-        )
-        daily_sequence = list(daily_qs[:365])
-        logger.info("Loaded %d daily climate records for CNN-LSTM", len(daily_sequence))
-
         dust_zone  = self.dust_clusterer.predict_zone(loc.location_id)
-        dust_factor = dust_zone.get('factor', 0.05)
-
-        # Enrich daily records with dust_risk_score for CNN-LSTM input
-        for row in daily_sequence:
-            row['dust_risk_score'] = dust_factor
-
         panels     = list(SolarPanel.objects.filter(in_stock=True))
         inverters  = list(Inverter.objects.filter(in_stock=True))
 
@@ -409,14 +391,13 @@ class EgyptianSolarOptimizer:
         max_panels= max(4, int(site_area / min_area))
 
         return {
-            'location':       {'latitude': loc.latitude, 'longitude': loc.longitude,
-                               'name': loc.name, 'id': loc.location_id},
-            'climate':        climate,
-            'dust_zone':      dust_zone,
-            'daily_sequence': daily_sequence,   # 365 raw DB rows for CNN-LSTM
-            'panels':         panels,
-            'inverters':      inverters,
-            'install_costs':  install_costs,
+            'location':      {'latitude': loc.latitude, 'longitude': loc.longitude,
+                              'name': loc.name, 'id': loc.location_id},
+            'climate':       climate,
+            'dust_zone':     dust_zone,
+            'panels':        panels,
+            'inverters':     inverters,
+            'install_costs': install_costs,
             'site': {
                 'available_area_m2': site_area,
                 'budget_egp':        budget,
@@ -585,14 +566,13 @@ class EgyptianSolarOptimizer:
 
     def run(self, request_data: dict) -> dict:
         """
-        Main NSGA-II entry point — high-fidelity mode.
+        Main NSGA-II entry point — production-optimised.
 
-        Pipeline:
-          Phase 1 — Context loading + daily climate DB fetch (CNN-LSTM data)
-          Phase 2 — Random Forest yield cache construction (~55 RF inferences)
-          Phase 3 — NSGA-II evolution (pop=80, gen=40, tournament=3)
-          Phase 4 — CNN-LSTM deep-learning re-scoring of Pareto front finalists
-          Phase 5 — Financial enrichment and response formatting
+        Improvements vs original:
+          1. Yield cache: RF called ~55× instead of 600+  (10-20× faster)
+          2. Adaptive pop/gen: scaled to search space size
+          3. Timeout guard: stops early if approaching Railway 30s limit
+          4. Soft dust membership: weighted dust factor, not hard cluster
 
         Args
         ----
@@ -602,55 +582,49 @@ class EgyptianSolarOptimizer:
 
         Returns
         -------
-        dict: run_id, convergence_time_sec, pareto_solutions, cache_hits,
-              cnn_lstm_used
+        dict: run_id, convergence_time_sec, pareto_solutions, cache_hits
         """
         start  = time.time()
         run_id = str(uuid.uuid4())[:8]
-        logger.info("[%s] ── Shamsi AI Engine v3 starting ──────────────────", run_id)
 
-        # ── Phase 1: Context loading ──────────────────────────────────────────
         context = self._build_context(request_data)
-        logger.info("[%s] Phase 1 complete: context loaded (%.2fs)", run_id, time.time() - start)
 
-        # ── Phase 2: Random Forest yield cache ───────────────────────────────
+        # ── Step 1: Build yield cache ─────────────────────────────────────────
         # All RF calls happen here — the evolution loop uses O(1) lookups.
         t_cache_start = time.time()
         context['yield_cache'] = self._build_yield_cache(context)
         cache_build_sec = round(time.time() - t_cache_start, 2)
         logger.info(
-            "[%s] Phase 2 complete: RF yield cache (%d entries) built in %.2fs",
-            run_id, len(context['yield_cache']), cache_build_sec,
+            "Yield cache built in %.2fs: %d entries",
+            cache_build_sec, len(context['yield_cache']),
         )
 
-        # ── Phase 3: NSGA-II evolution ────────────────────────────────────────
+        # ── Step 2: Adaptive population / generation sizing ───────────────────
+        # Larger search space → more population needed for coverage
         n_panels    = len(context['panels'])
         n_inverters = len(context['inverters'])
         search_size = n_panels * n_inverters
-
-        # Adaptive sizing: scale with search space, bounded by hard limits.
-        # Minimum pop=80 / gen=40 for high-fidelity mode.
-        pop_size = max(self.POPULATION_SIZE, min(120, search_size * 4))
-        n_gens   = max(self.GENERATIONS,    min(60,  search_size * 3))
+        # Scale pop between 20 and 50; gens between 15 and 30
+        pop_size = max(20, min(50, search_size * 3))
+        n_gens   = max(15, min(30, search_size * 2))
         logger.info(
-            "[%s] Phase 3: NSGA-II — %d panels × %d inverters → pop=%d, gen=%d",
-            run_id, n_panels, n_inverters, pop_size, n_gens,
+            "Adaptive NSGA-II: %d panels × %d inverters → pop=%d, gens=%d",
+            n_panels, n_inverters, pop_size, n_gens,
         )
 
-        # Initialise population
+        # ── Step 3: Initialise population ────────────────────────────────────
         pop = [self._make_individual(context) for _ in range(pop_size)]
         for ind in pop:
             ind.fitness = self._evaluate(ind, context)
 
-        # Evolve with hard timeout guard
+        # ── Step 4: Evolution with timeout guard ─────────────────────────────
         timed_out = False
-        gen = 0
         for gen in range(n_gens):
-            # Reserve 6 s for CNN-LSTM inference + formatting
-            if time.time() - start > self.MAX_WALL_SECONDS - 6:
+            # Hard timeout — return whatever we have before Railway kills us
+            if time.time() - start > self.MAX_WALL_SECONDS:
                 logger.warning(
-                    "[%s] NSGA-II stopping at gen %d/%d (wall %.1fs) — entering CNN-LSTM phase",
-                    run_id, gen, n_gens, time.time() - start,
+                    "NSGA-II timeout at gen %d/%d (%.1fs > %.1fs limit)",
+                    gen, n_gens, time.time() - start, self.MAX_WALL_SECONDS,
                 )
                 timed_out = True
                 break
@@ -688,32 +662,16 @@ class EgyptianSolarOptimizer:
                     break
             pop = new_pop
 
-        ga_elapsed = round(time.time() - start, 2)
-        logger.info("[%s] Phase 3 complete: %d gens in %.2fs", run_id, gen + 1, ga_elapsed)
-
-        # ── Phase 4: CNN-LSTM deep re-scoring ─────────────────────────────────
+        # ── Step 5: Extract Pareto front ──────────────────────────────────────
         final_fronts = self._non_dominated_sort(pop)
         pareto = [pop[i] for i in final_fronts[0]] if final_fronts else pop
 
-        selected, cnn_lstm_used = self._select_diverse_solutions(
-            pareto, context, n=5, run_id=run_id
-        )
-
-        # ── Ensure minimum 8-second analysis time for UX quality ─────────────
-        # The work IS real (80 pop × 40 gen GA + CNN-LSTM) but may still finish
-        # quickly on fast hardware. A brief hold reinforces the depth of analysis
-        # while staying well within the Railway timeout.
-        elapsed_so_far = time.time() - start
-        MIN_ANALYSIS_SECONDS = 8.0
-        if elapsed_so_far < MIN_ANALYSIS_SECONDS:
-            hold = MIN_ANALYSIS_SECONDS - elapsed_so_far
-            logger.info("[%s] Analysis hold: %.1fs (minimum quality threshold)", run_id, hold)
-            time.sleep(hold)
+        selected = self._select_diverse_solutions(pareto, context, n=5)
 
         elapsed = round(time.time() - start, 2)
         logger.info(
-            "[%s] ── Engine complete: %.2fs | %d solutions | cnn_lstm=%s | timed_out=%s",
-            run_id, elapsed, len(selected), cnn_lstm_used, timed_out,
+            "NSGA-II run %s complete: %.2fs, %d solutions, cache=%d entries, timed_out=%s",
+            run_id, elapsed, len(selected), len(context['yield_cache']), timed_out,
         )
 
         return {
@@ -724,89 +682,16 @@ class EgyptianSolarOptimizer:
             'dust_zone_info':       context['dust_zone'],
             'location_info':        context['location'],
             'timed_out':            timed_out,
-            'generations_run':      gen + 1,
-            'cnn_lstm_used':        cnn_lstm_used,
+            'generations_run':      gen + 1 if not timed_out else gen,
         }
 
     # ── Solution formatting ───────────────────────────────────────────────────
 
-    def _cnn_lstm_rescore(
-        self,
-        ind,
-        context: dict,
-        panel,
-        sys_kw: float,
-        run_id: str,
-    ) -> tuple:
-        """
-        Re-score a single Pareto individual using the CNN-LSTM deep model.
-
-        Returns (annual_kwh, monthly_list, used_cnn) where used_cnn is a bool.
-        Falls back to RF-based prediction silently if CNN-LSTM is unavailable.
-        """
-        daily_sequence = context.get('daily_sequence', [])
-        cnn_lstm_model = None
-
-        # Try registry first (model pre-loaded at startup)
-        try:
-            from ai_engine.model_registry import registry
-            if registry.is_ready('cnn_lstm'):
-                cnn_lstm_model = registry.cnn_lstm
-        except Exception:
-            pass
-
-        if cnn_lstm_model is not None and len(daily_sequence) >= 365:
-            try:
-                result = cnn_lstm_model.predict(
-                    daily_sequence=daily_sequence,
-                    system_kw=sys_kw,
-                    panel_efficiency=panel.efficiency_pct / 100.0,
-                    tilt_angle=ind[3],
-                    dust_risk=context['dust_zone']['factor'],
-                )
-                annual_kwh = result['predicted_annual_kwh']
-                monthly    = result['predicted_monthly']
-
-                # Apply shading loss (CNN-LSTM raw output doesn't know site shading)
-                shading = context['site']['shading_loss_pct'] / 100.0
-                annual_kwh = annual_kwh * (1 - shading)
-                monthly    = [round(m * (1 - shading), 1) for m in monthly]
-
-                logger.info(
-                    "[%s] CNN-LSTM re-score → %.0f kWh/yr (RF was %.0f kWh/yr)",
-                    run_id, annual_kwh, ind.fitness[0],
-                )
-                return annual_kwh, monthly, True
-            except Exception as exc:
-                logger.warning("[%s] CNN-LSTM re-score failed: %s — using RF", run_id, exc)
-
-        # Fallback: RF-based monthly prediction
-        rf_result = self.yield_predictor.predict({
-            'avg_ghi':          context['climate']['avg_ghi'],
-            'avg_temperature':  context['climate']['avg_temperature'],
-            'max_temperature':  context['climate']['max_temperature'],
-            'avg_humidity':     context['climate']['avg_humidity'],
-            'avg_wind_speed':   context['climate']['avg_wind_speed'],
-            'dust_risk_score':  context['dust_zone']['factor'],
-            'latitude':         context['location']['latitude'],
-            'tilt_angle':       ind[3],
-            'panel_efficiency': panel.efficiency_pct / 100.0,
-            'temp_coefficient': panel.temp_coefficient_pct,
-        }, system_kw=sys_kw, calculate_interval=False)
-        return (
-            rf_result.get('predicted_annual_kwh', ind.fitness[0]),
-            rf_result.get('predicted_monthly', []),
-            False,
-        )
-
-    def _select_diverse_solutions(self, pareto, context, n: int = 5, run_id: str = '') -> tuple:
+    def _select_diverse_solutions(self, pareto, context, n: int = 5) -> list:
         """
         Select n diverse solutions from Pareto front.
         Sorts by energy yield descending, picks evenly spaced solutions.
-        CNN-LSTM is used to re-score each finalist for high-fidelity monthly output.
         Enriches each with financial metrics.
-
-        Returns (solutions_list, cnn_lstm_was_used)
         """
         from solar_data.utils import calculate_annual_savings
 
@@ -851,54 +736,55 @@ class EgyptianSolarOptimizer:
                           if i * step < len(remaining_valid)]
                 chosen.extend(extras)
 
-        solutions      = []
-        cnn_lstm_used  = False
-        monthly_kwh    = float(context['request'].get('monthly_consumption_kwh', 500))
-        usage_type     = context['request'].get('usage_type', 'RESIDENTIAL')
+        solutions = []
+        monthly_kwh = float(context['request'].get('monthly_consumption_kwh', 500))
+        usage_type  = context['request'].get('usage_type', 'RESIDENTIAL')
 
         for rank, ind in enumerate(chosen, start=1):
             panel    = context['panels'][ind[0]]
             inverter = context['inverters'][ind[1]]
             count    = ind[2]
             tilt     = ind[3]
+            energy   = ind.fitness[0]
             cost     = ind.fitness[1]
             space    = ind.fitness[2]
             sys_kw   = (count * panel.capacity_w) / 1000.0
 
-            # ── Phase 4: CNN-LSTM deep re-score ──────────────────────────────
-            # For each finalist, run the full CNN-LSTM pipeline using real
-            # 365-day climate data to produce high-fidelity monthly predictions.
-            # This replaces the simple RF scalar estimate with the temporal
-            # deep-learning model that captures seasonal patterns.
-            final_annual_kwh, monthly_production, used_cnn = self._cnn_lstm_rescore(
-                ind, context, panel, sys_kw, run_id
-            )
-            if used_cnn:
-                cnn_lstm_used = True
-                # Use CNN-LSTM annual as the authoritative energy figure
-                energy = final_annual_kwh
-            else:
-                # Fall back to GA fitness energy (RF-based)
-                energy = ind.fitness[0]
-
-            savings       = calculate_annual_savings(energy, usage_type, monthly_kwh)
+            savings  = calculate_annual_savings(energy, usage_type, monthly_kwh)
             annual_saving = savings['annual_savings_egp']
 
             payback = round(cost / annual_saving, 1) if annual_saving > 0 else 99.0
 
-            # 25-year ROI: 17% annual tariff escalation, 0.45% panel degradation
-            s = annual_saving
+            # 25-year ROI with 17% tariff escalation, 0.45% degradation
+            roi_25yr = 0.0
             cum_saving = 0.0
+            s = annual_saving
             for yr in range(1, 26):
-                s *= (1 + 0.17)
-                s *= (1 - 0.0045)
+                s *= (1 + 0.17)            # tariff escalation
+                s *= (1 - 0.0045)          # panel degradation
                 cum_saving += s
             roi_25yr = round(cum_saving - cost, 0)
 
+            # Monthly production
+            pred    = self.yield_predictor.predict({
+                'avg_ghi':           context['climate']['avg_ghi'],
+                'avg_temperature':   context['climate']['avg_temperature'],
+                'max_temperature':   context['climate']['max_temperature'],
+                'avg_humidity':      context['climate']['avg_humidity'],
+                'avg_wind_speed':    context['climate']['avg_wind_speed'],
+                'dust_risk_score':   context['dust_zone']['factor'],
+                'latitude':          context['location']['latitude'],
+                'tilt_angle':        tilt,
+                'panel_efficiency':  panel.efficiency_pct / 100.0,
+                'temp_coefficient':  panel.temp_coefficient_pct,
+            }, system_kw=sys_kw, calculate_interval=False)
+
             # Performance ratio: PR = annual_yield / (system_kWp × GHI_annual)
-            avg_ghi    = context['climate']['avg_ghi']
-            ghi_annual = avg_ghi * 365  # kWh/m²/yr
-            perf_ratio = round(energy / (sys_kw * ghi_annual), 3) if (sys_kw > 0 and ghi_annual > 0) else 0.0
+            # where GHI_annual = avg_ghi (kWh/m²/day) × 365
+            # This replaces the old incorrect constant of 1825.
+            avg_ghi      = context['climate']['avg_ghi']
+            ghi_annual   = avg_ghi * 365          # kWh/m²/yr = "peak sun hours"
+            perf_ratio   = round(energy / (sys_kw * ghi_annual), 3) if (sys_kw > 0 and ghi_annual > 0) else 0.0
 
             solutions.append({
                 'rank':                   rank,
@@ -920,12 +806,11 @@ class EgyptianSolarOptimizer:
                 'payback_years':          payback,
                 'annual_savings_egp':     round(annual_saving, 0),
                 'roi_25yr_egp':           roi_25yr,
-                'monthly_production':     monthly_production,
+                'monthly_production':     pred['predicted_monthly'],
                 'dust_zone':              context['dust_zone']['name'],
                 'cleaning_interval_days': context['dust_zone']['cleaning_days'],
-                'performance_ratio':      perf_ratio,
-                'avg_ghi':                round(avg_ghi, 2),
-                'yield_model':            'CNN-LSTM' if used_cnn else 'RF-V2',
+                'performance_ratio':      perf_ratio,   # pre-computed, accurate
+                'avg_ghi':               round(avg_ghi, 2),
             })
 
-        return solutions, cnn_lstm_used
+        return solutions
