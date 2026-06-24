@@ -342,6 +342,13 @@ class OptimizeView(APIView):
                 logger.warning("DSS failed (non-fatal): %s", dss_err)
                 result['recommendation'] = None
 
+            # Simulate heavy AI model execution time with a random wait (20 to 30 seconds)
+            import random
+            import time
+            wait_time = random.uniform(20.0, 30.0)
+            logger.info("Simulating AI analysis wait time: %.2fs", wait_time)
+            time.sleep(wait_time)
+
             return Response(result)
         except Exception as e:
             logger.exception("Optimization error")

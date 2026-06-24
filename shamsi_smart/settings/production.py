@@ -67,11 +67,11 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 REST_FRAMEWORK = {'DEFAULT_PERMISSION_CLASSES': ['rest_framework.permissions.AllowAny'], 'DEFAULT_AUTHENTICATION_CLASSES': ['rest_framework.authentication.TokenAuthentication', 'rest_framework.authentication.SessionAuthentication'], 'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination', 'PAGE_SIZE': 50, 'DEFAULT_FILTER_BACKENDS': ['django_filters.rest_framework.DjangoFilterBackend']}
 
 CORS_ALLOW_ALL_ORIGINS = False
-CORS_ALLOWED_ORIGINS = ['https://shamsiai.netlify.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:3000']
+CORS_ALLOWED_ORIGINS = ['https://shamsiai.netlify.app', 'http://localhost:5173', 'http://localhost:4173', 'http://localhost:3000', 'https://shamsi-front.ahmedelshkh6566.workers.dev']
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = ['accept', 'accept-encoding', 'authorization', 'content-type', 'dnt', 'origin', 'user-agent', 'x-csrftoken', 'x-requested-with']
 
-CSRF_TRUSTED_ORIGINS = ['https://shamsiai.netlify.app', 'https://shamsi-backend-production.up.railway.app', 'https://*.railway.app']
+CSRF_TRUSTED_ORIGINS = ['https://shamsiai.netlify.app', 'https://shamsi-backend-production.up.railway.app', 'https://*.railway.app', 'https://shamsi-front.ahmedelshkh6566.workers.dev']
 SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
 USE_X_FORWARDED_HOST = True
 USE_X_FORWARDED_PORT = True

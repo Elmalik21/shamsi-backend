@@ -753,7 +753,24 @@ class EgyptianSolarOptimizer:
             savings  = calculate_annual_savings(energy, usage_type, monthly_kwh)
             annual_saving = savings['annual_savings_egp']
 
-            payback = round(cost / annual_saving, 1) if annual_saving > 0 else 99.0
+            # Calculate realistic payback (17% escalation, 0.45% degradation, 1200 EGP/yr maintenance)
+            cumulative_s = 0.0
+            payback = 25.0
+            s = annual_saving
+            for yr in range(1, 26):
+                if yr > 1:
+                    s *= (1 + 0.17) * (1 - 0.0045)
+                else:
+                    s *= (1 - 0.0045)
+                
+                net_saving = s - 1200.0
+                cumulative_s += net_saving
+                
+                if cumulative_s >= cost and payback == 25.0:
+                    prev_cum = cumulative_s - net_saving
+                    if net_saving > 0:
+                        frac = (cost - prev_cum) / net_saving
+                        payback = round(yr - 1 + frac, 1)
 
             # 25-year ROI with 17% tariff escalation, 0.45% degradation
             roi_25yr = 0.0

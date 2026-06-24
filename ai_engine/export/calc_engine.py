@@ -377,20 +377,42 @@ def normalize_and_validate_project(project_data: Dict) -> Dict:
     annual_savings = annual_yield_kwh * tariff_price
     opt['annual_savings_egp'] = annual_savings
     
-    payback_years = total_cost / annual_savings if annual_savings > 0 else 7.0
+    # Calculate realistic payback (17% escalation, 0.45% degradation, 1200 EGP/yr maintenance)
+    cumulative_s = 0.0
+    payback_years = 25.0
+    s = annual_savings
+    for yr in range(1, 26):
+        if yr > 1:
+            s *= (1 + 0.17) * (1 - 0.0045)
+        else:
+            s *= (1 - 0.0045)
+        
+        net_saving = s - 1200.0
+        cumulative_s += net_saving
+        
+        if cumulative_s >= total_cost and payback_years == 25.0:
+            prev_cum = cumulative_s - net_saving
+            if net_saving > 0:
+                frac = (total_cost - prev_cum) / net_saving
+                payback_years = round(yr - 1 + frac, 1)
+
     opt['payback_years'] = payback_years
     
-    # 25-yr cashflow
-    degradation = 0.005
-    escalation = 0.05
+    # 25-yr cashflow matching realistic baseline
+    degradation = 0.0045
+    escalation = 0.17
     cumulative = -total_cost
     total_savings_25yr = 0.0
+    s = annual_savings
     for yr in range(1, 26):
-        prod_t = annual_yield_kwh * ((1.0 - degradation) ** yr)
-        tariff_t = tariff_price * ((1.0 + escalation) ** yr)
-        saving_t = prod_t * tariff_t
-        cumulative += saving_t
-        total_savings_25yr += saving_t
+        if yr > 1:
+            s *= (1 + escalation) * (1 - degradation)
+        else:
+            s *= (1 - degradation)
+        
+        net_saving = s - 1200.0
+        cumulative += net_saving
+        total_savings_25yr += net_saving
         
     opt['lifetime_savings_egp'] = cumulative
     opt['gross_savings_25yr'] = total_savings_25yr
