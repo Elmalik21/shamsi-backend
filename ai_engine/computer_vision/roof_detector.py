@@ -142,7 +142,7 @@ class EgyptianRoofDetector:
     def detect_roof(
         self,
         image_path: str,
-        confidence_threshold: float = 0.5,
+        confidence_threshold: float = 0.55,
         latitude: float = 30.0,
         zoom: int = 19,
     ) -> Dict:

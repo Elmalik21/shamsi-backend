@@ -17,6 +17,8 @@ def custom_500(request):
 
 
 from django.views.generic import TemplateView
+from django.views.static import serve
+from django.urls import re_path
 
 urlpatterns = [
     path('favicon.ico', lambda req: HttpResponse(status=204)),
@@ -29,7 +31,11 @@ urlpatterns = [
 
 if settings.DEBUG:
     urlpatterns += static(settings.STATIC_URL, document_root=settings.STATIC_ROOT)
-    urlpatterns += static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+
+# Serve media files globally (even in production) since we use local temporary storage instead of AWS S3
+urlpatterns += [
+    re_path(r'^media/(?P<path>.*)$', serve, {'document_root': settings.MEDIA_ROOT}),
+]
 
 handler404 = custom_404
 handler500 = custom_500
